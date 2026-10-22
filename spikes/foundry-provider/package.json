@@ -1,0 +1,21 @@
+{
+  "name": "foundry-spike",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "smoke": "node --env-file=.env smoke.mjs",
+    "spike": "tsx --env-file=.env spike.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "^3.0.75",
+    "ai": "^7.0.148",
+    "zod": "^3.25.0",
+    "@ai-sdk/openai": "^4.0.101"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
