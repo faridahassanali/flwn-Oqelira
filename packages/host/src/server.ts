@@ -114,6 +114,7 @@ export function createHost(opts: HostOptions) {
             send({ type: 'approval', approval: { ...request, id } })
           }) },
           onText: text => send({ type: 'text', text }),
+          onContextCompacted: info => send({ type: 'context-compacted', originalChars: info.originalChars, requestChars: info.requestChars, archivedMessages: info.archivedMessages }),
           onToolCall: call => send({ type: 'tool-call', ...call }),
           onToolResult: result => send({ type: 'tool-result', ...result }),
         })

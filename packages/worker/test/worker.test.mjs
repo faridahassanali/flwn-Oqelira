@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process'
 const runner = fileURLToPath(new URL('../runner.mjs', import.meta.url))
 async function call(root, name, input) {
   return new Promise((resolve, reject) => {
-    const processHandle = spawn(process.execPath, [runner], { env: { ...process.env, OQELIRA_WORKER_ROOT: root }, stdio: ['pipe','pipe','pipe'], windowsHide: true })
+    const processHandle = spawn(process.execPath, ['--import','tsx',runner], { env: { ...process.env, OQELIRA_WORKER_ROOT: root }, stdio: ['pipe','pipe','pipe'], windowsHide: true })
     let output = '', errors = ''
     processHandle.stdout.on('data', bytes => { output += bytes })
     processHandle.stderr.on('data', bytes => { errors += bytes })
@@ -43,4 +43,20 @@ test('worker runs the same bounded project search without shell access', async (
     assert.deepEqual(JSON.parse(response.output).matches,[{path:'code.ts',line:2,text:'needle code'}])
     assert.match((await call(dir,'search_text',{query:'needle',path:'../'})).error,/outside/)
   } finally { await fs.rm(dir,{recursive:true,force:true}) }
+})
+
+test('isolated worker applies and reverts versioned file changes with stale-write protection',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'oq-worker-changes-'))
+ try{
+   const snap=JSON.parse((await call(root,'file_snapshot',{path:'new.ts'})).output)
+   assert.equal(snap.exists,false)
+   const written=await call(root,'apply_file_change',{path:'new.ts',expected_sha256:null,content:'version one'})
+   assert.equal(written.error,undefined)
+   const id=JSON.parse(written.output).change_id
+   assert.match((await call(root,'apply_file_change',{path:'new.ts',expected_sha256:null,content:'stale'})).error,/changed since preview/)
+   const input=JSON.parse((await call(root,'read_file_change',{change_id:id})).output)
+   assert.equal((await call(root,'revert_file_change',input)).error,undefined)
+   assert.equal(JSON.parse((await call(root,'file_snapshot',{path:'new.ts'})).output).exists,false)
+   assert.match((await call(root,'read_file',{path:'.oqelira/changes/'+id+'.json'})).error,/excluded/)
+ }finally{await fs.rm(root,{recursive:true,force:true})}
 })

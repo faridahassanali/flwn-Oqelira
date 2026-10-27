@@ -13,3 +13,4 @@ dist/
 work/
 .azure/
 outputs/*.private.md
+*.vsix

@@ -1469,3 +1469,5 @@ h1 {
 .memory-card p {
   color:var(--ink-72)
 }
+.social-button{display:flex;width:100%;margin-top:var(--s-3)}
+.auth-card .text-button{display:block}

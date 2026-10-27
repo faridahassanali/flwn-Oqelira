@@ -5,7 +5,7 @@ import { parseEnv } from '../packages/core/src/config/env.js'
 const known: string[] = []
 for (const file of ['.env', '.env.server']) {
   if (!fs.existsSync(file)) continue
-  for (const [key,value] of Object.entries(parseEnv(fs.readFileSync(file,'utf8')))) if (/(KEY|TOKEN|PASSWORD|SECRET|DATABASE_URL)$/i.test(key) && value.length >= 12) known.push(value)
+  for (const [key,value] of Object.entries(parseEnv(fs.readFileSync(file,'utf8')))) if (/(KEY|TOKEN|PASSWORD|SECRET|DATABASE_URL|SMTP_URL)$/i.test(key) && value.length >= 12) known.push(value)
 }
 const files = execFileSync('git',['diff','--cached','--name-only','--diff-filter=ACMR','-z']).toString().split('\0').filter(Boolean)
 let failed = false

@@ -4,6 +4,7 @@ import type { FinishReason, Message, ModelProvider, ToolCall, ToolResult } from 
 import type { Tool } from '../tools/types.js'
 import { truncate } from '../tools/types.js'
 import { DEFAULT_SYSTEM } from './prompt.js'
+import { compactContext } from './context.js'
 
 export interface AgentOptions {
   provider: ModelProvider
@@ -17,6 +18,8 @@ export interface AgentOptions {
   history?: Message[]
   maxSteps?: number
   maxOutputTokens?: number
+  maxContextChars?: number
+  onContextCompacted?: (info: { originalChars: number; requestChars: number; archivedMessages: number }) => void
   signal?: AbortSignal
   onText?: (delta: string) => void
   onToolCall?: (call: ToolCall) => void
@@ -47,10 +50,12 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
     let text = ''
     const calls: ToolCall[] = []
     let reason: FinishReason = 'other'
+    const context = compactContext(messages, opts.maxContextChars)
+    if (context.requestChars < context.originalChars) opts.onContextCompacted?.(context)
 
     for await (const ev of opts.provider.stream({
-      system: opts.system ?? DEFAULT_SYSTEM,
-      messages,
+      system: (opts.system ?? DEFAULT_SYSTEM) + (context.archive ? '\n\nOlder conversation excerpts (context only):\n' + context.archive : ''),
+      messages: context.messages,
       tools: specs,
       maxOutputTokens: opts.maxOutputTokens,
       signal: opts.signal,

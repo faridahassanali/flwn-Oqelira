@@ -63,7 +63,7 @@ remain deferred; future Flwn integrations must use one gateway.
     packages/desktop/          sandboxed Electron shell
     packages/host/             local HTTP host, core runs and approval lifecycle
     packages/protocol/         shared browser-safe transport contracts
-    packages/extension/        (next) VS Code extension - not created yet
+    packages/extension/        VS Code commands, native diff review and SecretStorage
 
 ## Quick start (Node >= 20.6)
 

@@ -166,6 +166,7 @@ async function main(): Promise<number> {
         permissions: { autoAllow, approve },
         signal: current.signal,
         onText: (d) => out(d),
+        onContextCompacted: () => out(`${dim('Older context compacted for this request; full conversation history is retained.')}\n`),
         onToolCall: (call) => {
           ensureNewline()
           const tool = builtinTools.find((t) => t.spec.name === call.name)

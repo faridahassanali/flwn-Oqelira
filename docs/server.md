@@ -103,13 +103,13 @@ project memory, and reopening a saved conversation after refresh. One real
 Foundry deployment was verified through the provider. The end-to-end combination
 of Azure PostgreSQL + private runner + live Foundry has not been tested yet.
 
-Remaining product work includes team invitations/roles, email verification and
-password-recovery delivery, MFA/SSO, repository import and GitHub credentials,
-semantic memory/retrieval, context compaction, inline diff apply/revert, durable
-run reconnection, billing/usage and packaged signed desktop releases. Until an
-email delivery flow exists, keep public signup disabled in production and onboard
-only controlled test accounts. No claim of production completeness or penetration
-testing is made.
+Remaining product work includes Flwn SSO, Desktop external-browser OAuth return,
+repository import and GitHub repository credentials, semantic memory/retrieval,
+cross-process job recovery, billing and signed desktop releases. Account email
+and Google/GitHub activation require actual sender/provider configuration and
+live callback validation. Production signup stays closed pending deployment
+isolation validation. No claim of production completeness or penetration testing
+is made.
 
 ![Project memory UI verified with a mock model](../outputs/project-memory.jpg)
 
@@ -137,9 +137,24 @@ output before continuing. The worker image must be rebuilt to include search.
 
 ## Production registration gate
 
-Production startup rejects `OQELIRA_ALLOW_SIGNUP=true` while verified email,
-account-recovery delivery and controlled team enrollment are unfinished. This
-is enforced in configuration, not just recommended in this document. Local
-signup remains available for development fixtures. See the
-[readiness and identity review](readiness-review.md) for the outstanding work,
-including the separate Flwn and standalone account entry paths.
+Production startup rejects `OQELIRA_ALLOW_SIGNUP=true` while deployment isolation
+and live identity delivery remain unvalidated. Local signup remains available
+for development fixtures. Configure account mail and identity providers using
+the optional settings in `.env.example`; never commit their credentials.
+
+The Teams view creates verified-user organizations and sends invitations through
+the mail outbox. Owner/admin manage members and shared projects; members can run
+the agent; viewers can read without starting runs, writing or approving tools.
+Each endpoint checks current membership. Public signup is not enabled by adding
+an OAuth provider. Identity linking is explicit in Settings; matching email alone
+does not merge accounts.
+
+Server runs requested by the Web/Desktop client retain sequenced events in
+PostgreSQL. A dropped stream reconnects without repeating tools; Stop explicitly
+cancels the run. This supports one API process. Stored events survive restart,
+but an interrupted process does not automatically replay or resume commands.
+
+Context compaction builds a bounded, lossy request view while retaining the full
+transcript. Tracked UTF-8 text changes up to 10000 characters use snapshot hashes,
+fresh write approvals and ignored `.oqelira/changes` records. Revert rejects newer
+edits. Legacy writes and arbitrary shell commands are not automatically reversible.

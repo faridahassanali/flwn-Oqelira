@@ -15,12 +15,15 @@ function isInside(root: string, target: string): boolean {
 export async function resolveInside(cwd: string, p: string): Promise<string> {
   const root = await fs.realpath(cwd)
   const abs = path.resolve(root, p)
+  const sensitive = /(^|\/)(\.git|\.oqelira|\.ssh|\.azure|\.aws|\.env(?!\.example(?:\/|$))(?:\.[^/]*)?)(\/|$)|\.(pem|key|pfx|p12)$/i
+  if (sensitive.test(path.relative(root, abs).replaceAll('\\', '/'))) throw new Error('Credential and internal paths are excluded')
   let probe = abs
   for (;;) {
     try {
       const real = await fs.realpath(probe)
       const resolved = path.join(real, path.relative(probe, abs))
       if (!isInside(root, resolved)) throw new Error(`path is outside the workspace: ${p}`)
+      if (sensitive.test(path.relative(root, resolved).replaceAll('\\', '/'))) throw new Error('Credential and internal paths are excluded')
       return resolved
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e

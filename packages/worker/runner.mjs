@@ -2,10 +2,11 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { searchWorkspace } from '../core/src/tools/search-engine.mjs'
+import { snapshotFile, applyFileChange, readFileChange } from '../core/src/tools/changes.mjs'
 
 const root = await fs.realpath(process.env.OQELIRA_WORKER_ROOT ?? '/workspace')
 const isInside = p => { const rel = path.relative(root, p); return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel)) }
-const blocked = /(^|\/)(\.env(?:\..*)?|\.git|\.ssh|\.azure|\.aws|node_modules)(\/|$)|\.(pem|key|pfx|p12)$/i
+const blocked = /(^|\/)(\.env(?!\.example(?:\/|$))(?:\.[^/]*)?|\.git|\.oqelira|\.ssh|\.azure|\.aws|node_modules)(\/|$)|\.(pem|key|pfx|p12)$/i
 const truncate = text => text.length > 30000 ? text.slice(0, 30000) + '\n[truncated]' : text
 function str(input, key) { if (typeof input?.[key] !== 'string') throw new Error(`Expected ${key}`); return input[key] }
 async function inside(p) {
@@ -29,6 +30,9 @@ async function inside(p) {
   }
 }
 async function tool(name, input) {
+  if (name === 'file_snapshot') return JSON.stringify(await snapshotFile(root, str(input, 'path')))
+  if (name === 'apply_file_change' || name === 'revert_file_change') return applyFileChange(root, input, name === 'revert_file_change')
+  if (name === 'read_file_change') return JSON.stringify(await readFileChange(root, str(input, 'change_id')))
   if (name === 'search_text') return searchWorkspace(root, input)
   if (name === 'run_command') {
     const command = str(input, 'command')

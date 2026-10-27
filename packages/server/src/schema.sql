@@ -50,3 +50,27 @@ CREATE TABLE IF NOT EXISTS oq_quota (
   used integer NOT NULL,
   PRIMARY KEY(user_id, bucket)
 );
+
+CREATE TABLE IF NOT EXISTS oq_run_events (
+  sequence bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  user_id text NOT NULL,
+  conversation_id uuid NOT NULL,
+  run_id uuid NOT NULL,
+  event jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY(user_id, conversation_id) REFERENCES oq_conversations(user_id, id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS oq_run_events_replay ON oq_run_events(user_id,run_id,sequence);
+
+CREATE TABLE IF NOT EXISTS oq_account_mail (
+ id uuid PRIMARY KEY,
+ payload jsonb NOT NULL,
+ attempts integer NOT NULL DEFAULT 0,
+ available_at timestamptz NOT NULL DEFAULT now(),
+ locked_until timestamptz,
+ created_at timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE oq_projects ADD COLUMN IF NOT EXISTS organization_id text REFERENCES organization(id) ON DELETE CASCADE;
+ALTER TABLE oq_audit ADD COLUMN IF NOT EXISTS actor_id text REFERENCES "user"(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS oq_projects_organization ON oq_projects(organization_id);

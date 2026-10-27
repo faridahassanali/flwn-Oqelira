@@ -1,0 +1,66 @@
+{
+  "name": "oqelira-vscode",
+  "displayName": "Oqelira by Flwn",
+  "publisher": "flwn",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Oqelira coding agent using the shared core and your configured Foundry deployment.",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "main": "./dist/extension.cjs",
+  "activationEvents": [],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Oqelira reads project files and can execute explicitly approved commands."
+    },
+    "virtualWorkspaces": false
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "oqelira.ask",
+        "title": "Oqelira: Ask"
+      },
+      {
+        "command": "oqelira.stop",
+        "title": "Oqelira: Stop"
+      },
+      {
+        "command": "oqelira.configure",
+        "title": "Oqelira: Configure Foundry"
+      },
+      {
+        "command": "oqelira.clear",
+        "title": "Oqelira: New Conversation"
+      },
+      {
+        "command": "oqelira.revert",
+        "title": "Oqelira: Revert a File Change"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "esbuild src/extension.ts --bundle --platform=node --target=node20 --format=cjs --external:vscode --outfile=dist/extension.cjs",
+    "typecheck": "tsc --noEmit",
+    "package": "npm run build && node scripts/package.mjs",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@oqelira/core": "*"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.96.0",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "extensionKind": [
+    "workspace"
+  ]
+}

@@ -31,7 +31,6 @@ test('checkpoint captures interrupted tool intent and cancellation after approva
     await assert.rejects(fs.access(path.join(cwd, 'must-not-exist.txt')))
   })
 })
-
 const model: ModelConfig = { id: 'm', deployment: 'm-deployment', api: 'chat', speed: 'fast' }
 
 const nativeRealpath = (p: string) =>
@@ -252,3 +251,19 @@ test('generation errors, unfinished streams and token limits never report succes
     assert.equal(executed,false)
   }
 })
+
+test('context compaction bounds provider requests while checkpoints retain the full transcript and paired tools', async () => {
+  const history: import('../src/providers/types.js').Message[] = []
+  for(let turn=0;turn<12;turn++) history.push({role:'user',content:`Task ${turn}`},{role:'assistant',text:'Reading',toolCalls:[{id:`tool-${turn}`,name:'read_file',input:{path:'source.ts'}}]},{role:'tool',results:[{id:`tool-${turn}`,name:'read_file',output:'content '.repeat(1500)}]},{role:'assistant',text:'Reviewed',toolCalls:[]})
+  const before=JSON.stringify(history)
+  let compacted=false, stored=''
+  const result=await runAgent({cwd:'.',prompt:'Continue with the next change',history,tools:[],maxContextChars:10_000,onContextCompacted:info=>{compacted=true;assert.ok(info.requestChars<=10_000)},onCheckpoint:async messages=>{stored=JSON.stringify(messages)},provider:{id:'fixture',async *stream(request){
+    assert.ok(JSON.stringify(request.messages).length<10_000)
+    assert.match(request.system!,/context only/)
+    assert.equal(request.messages.at(-1)?.role,'user')
+    yield {type:'text-delta',text:'Ready'};yield{type:'finish',reason:'stop'}
+  }}})
+  assert.equal(compacted,true);assert.equal(JSON.stringify(history),before)
+  assert.ok(stored.includes('Task 0'));assert.equal(result.messages.length,history.length+2)
+})
+

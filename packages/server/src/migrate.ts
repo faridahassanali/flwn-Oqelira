@@ -5,7 +5,7 @@ import { createAuth } from './auth.js'
 import { serverConfig } from './config.js'
 
 export async function migrate(pool: Pool, config: ReturnType<typeof serverConfig>) {
-  const auth = createAuth(pool, config)
+  const auth = createAuth(pool, config, config.requireEmailVerification ? async()=>{throw new Error('Schema-only authentication cannot send email')} : undefined)
   const { runMigrations } = await getMigrations(auth.options)
   await runMigrations()
   await pool.query(await fs.readFile(new URL('./schema.sql', import.meta.url), 'utf8'))
