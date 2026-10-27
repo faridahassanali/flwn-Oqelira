@@ -32,3 +32,15 @@ test('worker file operations persist, reject ambiguous edits, and hide credentia
     assert.ok(!(await call(dir, 'list_dir', {path:'.'})).output.includes('.env'))
   } finally { await fs.rm(dir, {recursive:true,force:true}) }
 })
+
+test('worker runs the same bounded project search without shell access', async () => {
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'oq-worker-search-'))
+  try {
+    await fs.writeFile(path.join(dir,'code.ts'),'first\nneedle code')
+    await fs.writeFile(path.join(dir,'.env'),'needle excluded')
+    const response=await call(dir,'search_text',{query:'needle'})
+    assert.equal(response.error,undefined)
+    assert.deepEqual(JSON.parse(response.output).matches,[{path:'code.ts',line:2,text:'needle code'}])
+    assert.match((await call(dir,'search_text',{query:'needle',path:'../'})).error,/outside/)
+  } finally { await fs.rm(dir,{recursive:true,force:true}) }
+})

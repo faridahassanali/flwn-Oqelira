@@ -68,7 +68,14 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
 
     messages.push({ role: 'assistant', text, toolCalls: calls })
     await opts.onCheckpoint?.(messages)
-    if (calls.length === 0) return { messages, steps, text, finishReason: reason === 'length' ? 'length' : 'stop' }
+    if ((reason === 'length' || reason === 'error') && calls.length) {
+      const skipped = calls.map(call => ({ id: call.id, name: call.name, output: `Not executed: ${reason === 'length' ? 'model output limit reached' : 'model generation failed'}. Inspect the workspace before trying again.`, isError: true }))
+      messages.push({ role: 'tool', results: skipped })
+      for (const result of skipped) opts.onToolResult?.(result)
+      await opts.onCheckpoint?.(messages)
+    }
+    if (reason === 'error') throw new Error('Model generation failed')
+    if (calls.length === 0 || reason === 'length') return { messages, steps, text, finishReason: reason }
 
     const results: ToolResult[] = []
     messages.push({ role: 'tool', results })

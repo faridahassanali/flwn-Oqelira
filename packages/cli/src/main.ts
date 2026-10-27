@@ -185,6 +185,7 @@ async function main(): Promise<number> {
       ensureNewline()
       if (result.finishReason === 'max-steps') out(`${yellow(`Stopped after ${maxSteps} steps.`)} Say "continue" to go on.\n`)
       if (result.finishReason === 'length') out(`${yellow('The reply was cut off (output limit).')}\n`)
+      if (result.finishReason === 'other') out(`${yellow('The model stream ended without a completion signal. Review the output before continuing.')}\n`)
       return { ok: result.finishReason === 'stop', messages: result.messages }
     } catch (e) {
       ensureNewline()

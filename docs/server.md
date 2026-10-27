@@ -114,3 +114,23 @@ testing is made.
 ![Project memory UI verified with a mock model](../outputs/project-memory.jpg)
 
 See [Azure deployment boundaries](../deploy/azure/README.md).
+
+## Code search and reliable completion
+
+The shared `search_text` read tool is available to CLI, local Web/Desktop and the
+isolated server worker. It searches literal text, returning project-relative
+paths, 1-based line numbers and snippets. It needs no shell approval or additional
+network access. Its runtime engine is shared with the standalone worker and is
+checked by TypeScript using `checkJs`; the agent adapter remains TypeScript.
+
+Search skips hidden paths (including `.env` and `.git`), key/certificate files,
+common dependency/build directories, symlinks, binary files and files above
+256 KB. Defaults: 100 matches; hard limits: 200 matches, 2,000 visited entries,
+8 MB scanned, five seconds and a bounded JSON response. Results explicitly report
+limits; narrow the query/path to continue. This is not a full `.gitignore` parser
+or a guarantee that arbitrary source files contain no secrets.
+
+An errored or unfinished model stream no longer becomes a completed task. Tool
+calls returned at the model output limit are recorded as not executed, preserving
+valid conversation history without applying a partial change. Review incomplete
+output before continuing. The worker image must be rebuilt to include search.

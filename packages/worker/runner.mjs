@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
+import { searchWorkspace } from '../core/src/tools/search-engine.mjs'
 
 const root = await fs.realpath(process.env.OQELIRA_WORKER_ROOT ?? '/workspace')
 const isInside = p => { const rel = path.relative(root, p); return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel)) }
@@ -28,6 +29,7 @@ async function inside(p) {
   }
 }
 async function tool(name, input) {
+  if (name === 'search_text') return searchWorkspace(root, input)
   if (name === 'run_command') {
     const command = str(input, 'command')
     const timeout = input.timeout_seconds ?? 60

@@ -90,3 +90,6 @@ Project rules are read from `OQELIRA.md` or `AGENTS.md` in the project directory
 1. `cd spikes/foundry-provider` and follow its README.
 2. Read `docs/foundry-endpoint-problem.md` for why.
 3. Open questions live in `CONSIDERATIONS.md`.
+
+The agent also includes bounded literal `search_text` across local and server
+modes. See [search limits and completion handling](docs/server.md#code-search-and-reliable-completion).

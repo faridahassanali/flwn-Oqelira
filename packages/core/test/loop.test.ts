@@ -231,3 +231,24 @@ test('maxSteps stops a model that keeps calling tools', async () => {
     }
   })
 })
+
+test('generation errors, unfinished streams and token limits never report success or execute incomplete tool calls', async () => {
+  for (const reason of ['error','other','length'] as const) {
+    let executed=false
+    const task=runAgent({cwd:'.',prompt:'fixture',tools:[{spec:{name:'write_fixture',description:'fixture',parameters:{}},risk:'write',describe:()=> 'fixture',run:async()=>{executed=true;return 'written'}}],permissions:{autoAllow:['write']},provider:{id:'fixture',async *stream(){
+      if(reason !== 'other') yield {type:'tool-call',call:{id:'incomplete',name:'write_fixture',input:{}}}
+      yield {type:'finish',reason}
+    }}})
+    if(reason==='error') await assert.rejects(task,/generation failed/)
+    else {
+      const result = await task
+      assert.equal(result.finishReason,reason)
+      if (reason === 'length') {
+        const recorded = result.messages.at(-1)
+        assert.equal(recorded?.role, 'tool')
+        if (recorded?.role === 'tool') { assert.equal(recorded.results[0]?.isError, true); assert.match(recorded.results[0]!.output, /Not executed/) }
+      }
+    }
+    assert.equal(executed,false)
+  }
+})
