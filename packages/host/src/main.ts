@@ -1,7 +1,6 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createFoundry, foundryConfigFromEnv, DEFAULT_MODELS, loadEnvFiles } from '@oqelira/core'
-import type { ModelConfig } from '@oqelira/core'
+import { createFoundry, foundryConfigFromEnv, modelsFromEnv, loadEnvFiles } from '@oqelira/core'
 import { createHost } from './server.js'
 
 const root = fileURLToPath(new URL('../../../', import.meta.url))
@@ -9,12 +8,7 @@ loadEnvFiles({ cwd: root })
 const cwd = path.resolve(process.env.OQELIRA_WORKSPACE ?? root)
 let config: ReturnType<typeof foundryConfigFromEnv> | undefined
 try { config = foundryConfigFromEnv() } catch { /* UI shows setup guidance */ }
-let models: readonly ModelConfig[] = DEFAULT_MODELS
-if (process.env.OQELIRA_MODELS_JSON) {
-  const value: unknown = JSON.parse(process.env.OQELIRA_MODELS_JSON)
-  if (!Array.isArray(value) || !value.length || value.some(m => !m || typeof m.id !== 'string' || !m.id || typeof m.deployment !== 'string' || !m.deployment || !['chat', 'responses'].includes(m.api) || !['fast', 'slow'].includes(m.speed) || (m.reasoningEffort !== undefined && typeof m.reasoningEffort !== 'string')) || new Set(value.map(m => m.id)).size !== value.length) throw new Error('Invalid OQELIRA_MODELS_JSON')
-  models = value as ModelConfig[]
-}
+const models = modelsFromEnv()
 const host = createHost({ cwd, dist: path.join(root, 'packages/web/dist'), models, configured: Boolean(config), provider: model => {
   if (!config) throw new Error('Foundry is not configured')
   return createFoundry(config)(model)

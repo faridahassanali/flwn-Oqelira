@@ -21,6 +21,8 @@ export interface AgentOptions {
   onText?: (delta: string) => void
   onToolCall?: (call: ToolCall) => void
   onToolResult?: (result: ToolResult) => void
+  /** Persist complete/partial turns without coupling core to a database. */
+  onCheckpoint?: (messages: Message[]) => Promise<void>
 }
 
 export interface AgentResult {
@@ -37,8 +39,10 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
   const permissions = opts.permissions ?? READ_ONLY
   const maxSteps = opts.maxSteps ?? 25
   let steps = 0
+  await opts.onCheckpoint?.(messages)
 
   while (steps < maxSteps) {
+    opts.signal?.throwIfAborted()
     steps++
     let text = ''
     const calls: ToolCall[] = []
@@ -63,15 +67,17 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
     }
 
     messages.push({ role: 'assistant', text, toolCalls: calls })
+    await opts.onCheckpoint?.(messages)
     if (calls.length === 0) return { messages, steps, text, finishReason: reason === 'length' ? 'length' : 'stop' }
 
     const results: ToolResult[] = []
+    messages.push({ role: 'tool', results })
     for (const call of calls) {
       const result = await executeTool(call, toolMap, permissions, opts)
       opts.onToolResult?.(result)
       results.push(result)
+      await opts.onCheckpoint?.(messages)
     }
-    messages.push({ role: 'tool', results })
   }
 
   const last = [...messages].reverse().find((m) => m.role === 'assistant')
@@ -95,6 +101,7 @@ async function executeTool(
       input: call.input,
     })
     if (!verdict.allowed) return fail(`not allowed: ${verdict.reason ?? 'denied'}`)
+    opts.signal?.throwIfAborted()
     const output = await tool.run(call.input, { cwd: opts.cwd, signal: opts.signal })
     return { id: call.id, name: call.name, output: truncate(output) }
   } catch (e) {

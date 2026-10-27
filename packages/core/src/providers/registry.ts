@@ -28,3 +28,10 @@ export function findModel(id: string, models: readonly ModelConfig[] = DEFAULT_M
   if (!found) throw new Error(`Unknown model "${id}". Known: ${models.map((m) => m.id).join(', ')}`)
   return found
 }
+
+export function modelsFromEnv(env: NodeJS.ProcessEnv = process.env): readonly ModelConfig[] {
+  if (!env.OQELIRA_MODELS_JSON) return DEFAULT_MODELS
+  const value: unknown = JSON.parse(env.OQELIRA_MODELS_JSON)
+  if (!Array.isArray(value) || !value.length || value.some(m => !m || typeof m.id !== 'string' || !m.id.trim() || typeof m.deployment !== 'string' || !m.deployment.trim() || !['chat', 'responses'].includes(m.api) || !['fast', 'slow'].includes(m.speed) || (m.reasoningEffort !== undefined && typeof m.reasoningEffort !== 'string')) || new Set(value.map(m => m.id)).size !== value.length) throw new Error('Invalid OQELIRA_MODELS_JSON')
+  return value as ModelConfig[]
+}

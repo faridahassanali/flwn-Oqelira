@@ -12,6 +12,26 @@ import { builtinTools } from '../src/tools/index.js'
 import { startMock } from './mock-server.js'
 import type { Reply } from './mock-server.js'
 
+test('checkpoint captures interrupted tool intent and cancellation after approval prevents execution', async () => {
+  await withWorkspace(async cwd => {
+    const controller = new AbortController()
+    const checkpoints: string[] = []
+    await runAgent({
+      cwd, prompt: 'write', maxSteps: 1, tools: builtinTools, signal: controller.signal,
+      provider: { id: 'checkpoint-fixture', async *stream() {
+        yield { type: 'tool-call', call: { id: 'cancelled', name: 'write_file', input: { path: 'must-not-exist.txt', content: 'blocked' } } }
+        yield { type: 'finish', reason: 'tool-calls' }
+      } },
+      permissions: { autoAllow: ['read'], approve: async () => { controller.abort(); return true } },
+      onCheckpoint: async messages => { checkpoints.push(JSON.stringify(messages)) },
+    })
+    assert.equal(checkpoints.length, 3)
+    assert.match(checkpoints[1]!, /cancelled/)
+    assert.match(checkpoints[2]!, /isError/)
+    await assert.rejects(fs.access(path.join(cwd, 'must-not-exist.txt')))
+  })
+})
+
 const model: ModelConfig = { id: 'm', deployment: 'm-deployment', api: 'chat', speed: 'fast' }
 
 const nativeRealpath = (p: string) =>
