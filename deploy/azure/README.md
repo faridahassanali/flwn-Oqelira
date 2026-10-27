@@ -5,6 +5,18 @@ record of a completed Azure deployment. No resources have been created and no
 cloud permissions have been changed. Subscription-specific identifiers belong
 in private deployment configuration, not this public repository.
 
+`foundation.bicep` defines a new VNet/subnets, runner network security rules,
+private PostgreSQL, private Key Vault access/DNS and an ACR registry. It does not
+deploy the API, runner host, app secrets or identities, and does not touch the
+existing Foundry resource. The template was compiled with Bicep locally; region
+availability, quota, cost, naming collisions and Azure what-if validation remain
+unverified until an authenticated administrative connection is available.
+
+Its required inputs are `location`, a reviewed `databaseSku`, and a secure
+`databaseAdminPassword`. Supply secrets through private deployment tooling, not
+literal shell arguments or checked-in parameter files. Review a what-if result
+before applying the template to an existing resource group.
+
 ## Topology
 
 ```mermaid
