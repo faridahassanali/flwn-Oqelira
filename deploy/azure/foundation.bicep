@@ -5,7 +5,9 @@ param location string
 @minLength(3)
 @maxLength(10)
 param prefix string = 'oqelira'
-@description('Review region availability and cost before choosing a PostgreSQL GeneralPurpose SKU.')
+@allowed(['Burstable', 'GeneralPurpose'])
+param databaseTier string = 'Burstable'
+@description('Review region availability and cost before choosing the PostgreSQL SKU.')
 param databaseSku string
 @secure()
 param databaseAdminPassword string
@@ -71,12 +73,12 @@ resource databaseLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@202
 resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = {
   name: '${prefix}-pg-${suffix}'
   location: location
-  sku: { name: databaseSku, tier: 'GeneralPurpose' }
+  sku: { name: databaseSku, tier: databaseTier }
   properties: {
     version: '16'
     administratorLogin: 'oqeliraadmin'
     administratorLoginPassword: databaseAdminPassword
-    storage: { storageSizeGB: 32, autoGrow: 'Enabled' }
+    storage: { storageSizeGB: 32, autoGrow: databaseTier == 'Burstable' ? 'Disabled' : 'Enabled' }
     backup: { backupRetentionDays: 7, geoRedundantBackup: 'Disabled' }
     highAvailability: { mode: 'Disabled' }
     network: {

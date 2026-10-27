@@ -8,14 +8,19 @@ in private deployment configuration, not this public repository.
 `foundation.bicep` defines a new VNet/subnets, runner network security rules,
 private PostgreSQL, private Key Vault access/DNS and an ACR registry. It does not
 deploy the API, runner host, app secrets or identities, and does not touch the
-existing Foundry resource. The template was compiled with Bicep locally; region
-availability, quota, cost, naming collisions and Azure what-if validation remain
-unverified until an authenticated administrative connection is available.
+existing Foundry resource. The template was compiled with Bicep locally, and an
+authenticated what-if succeeded against the selected existing resource group:
+13 new resources and no modifications or deletions of existing resources.
+France Central offers the starter Standard_B1ms Burstable SKU. Actual allocation
+is still subject to Azure capacity and quota at deployment time.
 
 Its required inputs are `location`, a reviewed `databaseSku`, and a secure
 `databaseAdminPassword`. Supply secrets through private deployment tooling, not
 literal shell arguments or checked-in parameter files. Review a what-if result
 before applying the template to an existing resource group.
+The optional `databaseTier` defaults to Burstable; choose GeneralPurpose with a
+compatible SKU for a larger workload. The starter has no HA and fixed 32GB storage;
+autogrow is enabled only for the GeneralPurpose branch of this template.
 
 ## Topology
 

@@ -12,3 +12,4 @@ dist/
 *.db-*
 work/
 .azure/
+outputs/*.private.md
