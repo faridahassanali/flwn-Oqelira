@@ -1,4 +1,15 @@
 :root{font-family:Inter,"Segoe UI",sans-serif;color:#19213b;background:#fcfbf8;font-synthesis:none;font-size:14px}
+.auth-page{grid-column:1/-1;grid-row:1/-1;display:grid;place-items:center;padding:24px;overflow:auto}
+.auth-card{width:min(440px,100%);padding:32px;border:1px solid #e8e2ec;border-radius:24px;background:#ffffffef;box-shadow:0 10px 55px #44206b0a}
+.auth-card h1{font-size:26px}.auth-card h1 small{font-size:14px;font-weight:400}.auth-card p{line-height:1.7;color:#77708a}
+.auth-card form,.page-panel form{display:grid;gap:16px;margin:24px 0}
+.auth-card label,.page-panel form label{display:grid;gap:8px;font-size:13px}
+input,form textarea{font:inherit;padding:12px;border:1px solid #dfd8e7;border-radius:9px;background:#fff;color:inherit;max-width:100%}
+.auth-card button[type=submit],.page-panel button[type=submit]{background:#ffe49a}
+.saved-sessions{max-height:180px;overflow:auto}.saved-sessions button{display:block;width:100%;text-align:left;font-size:12px;margin:5px 0;overflow-wrap:anywhere;background:#ffffff80}
+.sidebar{overflow:auto}.recent{margin-top:24px}
+.sidebar>*{flex-shrink:0}.saved-sessions{min-height:80px}.new-session{flex-shrink:0}
+.file-tree{display:flex;flex-wrap:wrap;gap:8px;margin:20px 0}.file-tree button{font-size:12px}.git-diff{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.7;background:#f8f5fc;padding:16px;border-radius:12px}
 *{box-sizing:border-box}
 body{margin:0}
 button,textarea,select{font:inherit}

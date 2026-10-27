@@ -36,7 +36,15 @@ function createWindow() {
 }
 // Register lifecycle handlers immediately instead of suspending module evaluation.
 void app.whenReady().then(async () => {
-  try { origin = await startHost(); createWindow() }
+  try {
+    const cloud = process.env.OQELIRA_DESKTOP_SERVER_URL
+    if (cloud) {
+      const target = new URL(cloud)
+      if ((target.protocol !== 'https:' && !(target.protocol === 'http:' && ['127.0.0.1','localhost'].includes(target.hostname))) || target.username || target.password || target.pathname !== '/' || target.search || target.hash) throw new Error('Use an HTTPS server origin')
+      origin = target.origin
+    } else origin = await startHost()
+    createWindow()
+  }
   catch { dialog.showErrorBox('Oqelira could not start', 'The local host could not start. Check your installation and try again.'); app.quit() }
 })
 app.on('before-quit', () => { if (host?.connected) host.disconnect(); host?.kill() })

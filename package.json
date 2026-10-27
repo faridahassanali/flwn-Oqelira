@@ -7,11 +7,19 @@
   ],
   "scripts": {
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test -w @oqelira/core -w @oqelira/cli -w @oqelira/host",
+    "test": "npm run test -w @oqelira/core -w @oqelira/cli -w @oqelira/host -w @oqelira/server -w @oqelira/worker",
     "live": "npm run live -w @oqelira/core",
     "oqelira": "node packages/cli/bin/oqelira.mjs",
     "web": "npm run build && npm run start -w @oqelira/host",
     "desktop": "npm run start -w @oqelira/desktop",
-    "build": "npm run build -w @oqelira/web"
+    "build": "npm run build -w @oqelira/web",
+    "setup:server": "node --import tsx scripts/setup-server.ts",
+    "security:staged": "node --import tsx scripts/check-staged-secrets.ts",
+    "server": "node --env-file=.env.server --import tsx packages/server/src/main.ts",
+    "db:migrate": "node --env-file=.env.server --import tsx packages/server/src/migrate.ts",
+    "db:start": "docker compose --env-file .env.server -f deploy/compose.dev.yml up -d db",
+    "sandbox": "node --env-file=.env.server --import tsx packages/server/src/runner.ts",
+    "worker:build": "docker build -t oqelira-worker:local -f packages/worker/Dockerfile .",
+    "foundry:check": "node --import tsx packages/core/scripts/check-connection.ts"
   }
 }

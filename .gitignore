@@ -5,3 +5,10 @@ dist/
 !.env.example
 .DS_Store
 *.log
+.oqelira/
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+work/
+.azure/

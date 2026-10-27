@@ -1,0 +1,26 @@
+{
+  "name": "@oqelira/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --import tsx src/main.ts",
+    "runner": "node --import tsx src/runner.ts",
+    "migrate": "node --import tsx src/migrate.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@oqelira/core": "*",
+    "@oqelira/protocol": "*",
+    "better-auth": "1.7.14",
+    "pg": "8.23.1"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.12",
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.15.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

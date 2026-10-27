@@ -3,6 +3,8 @@ export interface HostConfig {
   workspace: string
   models: { id: string; deployment: string }[]
   configured: boolean
+  mode?: 'server'
+  user?: { id: string; name: string } | null
 }
 export interface Approval {
   id: string

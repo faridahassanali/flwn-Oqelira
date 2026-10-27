@@ -1,5 +1,12 @@
 # Plan
 
+Current scope: standalone **multi-user Azure server** with the shared Web/Desktop
+client. Implemented: Better Auth, PostgreSQL persistence, project memory, owner
+checks, checkpoint recovery, quotas, Explorer/Git reads and private runner transport.
+See `docs/server.md` for tested behavior and explicit remaining product work.
+Azure deployment, gVisor/Docker integration and a complete production security
+review are pending; do not interpret this as a finished production coding agent.
+
 0. **Spike (done):** results in `docs/spike-results.md`.
 1a. **Core slice (done, live-validated 2026-10-23):** `packages/core`.
 1b. **CLI (done):** `packages/cli`.

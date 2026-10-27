@@ -11,7 +11,7 @@ const headers = { 'Content-Type': 'application/json', 'X-Oqelira-Client': 'works
 export async function approve(runId: string, approvalId: string, allowed: boolean): Promise<void> {
   await checked(await fetch('/api/approval', { method: 'POST', headers, body: JSON.stringify({ runId, approvalId, allowed }) }))
 }
-export async function run(request: { prompt: string; model: string; sessionId?: string }, signal: AbortSignal, onEvent: (event: HostEvent) => void): Promise<void> {
+export async function run(request: { prompt: string; model: string; sessionId?: string; projectId?: string }, signal: AbortSignal, onEvent: (event: HostEvent) => void): Promise<void> {
   const response = await checked(await fetch('/api/run', { method: 'POST', headers, body: JSON.stringify(request), signal }))
   if (!response.body) throw new Error('The host did not return a stream')
   const reader = response.body.getReader()

@@ -4,7 +4,17 @@
 reads the team's context (memory, decision ledger, tickets) from Flwn and helps members
 write code instead of writing it manually.
 
-Status: **core + CLI foundation; connected local Web and Desktop workspace**. Flwn memory and auth are deferred.
+Status: **connected local mode plus an implemented multi-user server mode**.
+Server mode adds standalone accounts, PostgreSQL conversations and project memory,
+tenant-scoped APIs, and isolated runner transport. Azure deployment and container
+isolation validation remain pending. Flwn integration remains separate.
+
+## Multi-user server
+
+See [server setup, capabilities and limits](docs/server.md) and the
+[Azure deployment runbook](deploy/azure/README.md). Foundry is called through the
+existing Vercel AI SDK provider; `npm run foundry:check` checks the real connection.
+The local mode below remains a separate development option without cloud accounts.
 
 ## Web and Desktop
 

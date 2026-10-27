@@ -1,0 +1,14 @@
+FROM node:24-bookworm-slim AS build
+WORKDIR /app
+COPY . .
+RUN npm ci --ignore-scripts && npm run build
+
+FROM node:24-bookworm-slim
+ENV NODE_ENV=production OQELIRA_LISTEN_HOST=0.0.0.0 PORT=4320
+WORKDIR /app
+# Keep tsx and the workspace source entry points for this initial distribution.
+# Electron's binary is never downloaded by this build.
+COPY --from=build --chown=node:node /app /app
+USER node
+EXPOSE 4320
+CMD ["node", "--import", "tsx", "packages/server/src/main.ts"]

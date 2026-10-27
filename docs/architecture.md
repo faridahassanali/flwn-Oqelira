@@ -1,5 +1,8 @@
 # Shared Web + Desktop architecture
 
+This page describes the original local-host mode. For the implemented multi-user
+PostgreSQL/auth/runner mode, see [server architecture](server.md).
+
 ## Current implementation
 
 Both entry points use `@oqelira/ui` and the same browser-safe `@oqelira/protocol`.
