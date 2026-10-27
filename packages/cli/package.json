@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node bin/oqelira.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test test/cli.test.ts"
+    "test": "node --import tsx --test test/*.test.ts"
   },
   "dependencies": {
     "@oqelira/core": "*"

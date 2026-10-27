@@ -1,23 +1,33 @@
-# Plan
+# PRODUCT STATUS
 
-Current scope: standalone **multi-user Azure server** with the shared Web/Desktop
-client. Implemented: Better Auth, PostgreSQL persistence, project memory, owner
-checks, checkpoint recovery, quotas, Explorer/Git reads and private runner transport.
-See `docs/server.md` for tested behavior and explicit remaining product work.
-Azure deployment, gVisor/Docker integration and a complete production security
-review are pending; do not interpret this as a finished production coding agent.
+# Oqelira is ready for the next security gate.
 
-0. **Spike (done):** results in `docs/spike-results.md`.
-1a. **Core slice (done, live-validated 2026-10-23):** `packages/core`.
-1b. **CLI (done):** `packages/cli`.
-1c. **Web + Desktop (connected local slice):** shared UI in `packages/ui`, Vite web entry,
-    sandboxed Electron shell, typed host transport, streamed core events and explicit tool approvals.
-    Next: browsable Explorer, Git diff/revert views, persistent sessions and desktop packaging.
-    Flwn memory and auth are deferred per current product scope.
-1. **Foundation (rest):** monorepo (`packages/core`, `packages/cli`), provider interface + Foundry
-   adapter, minimal agent loop (read/edit files, run commands, permission prompts).
-2. **Usable CLI:** sessions, diffs, context management.
-3. **Backend + auth:** Flwn login, LLM proxy, BYOK mode.
-4. **Flwn context:** recall from the data engine, tickets, `check_conflict`.
-5. **VS Code extension** over the same core.
-6. **ACP mode** for other IDEs.
+Oqelira is a multi-user coding-agent platform for Web, Desktop, CLI, and VS Code. It is not yet approved for production deployment: the runner isolation gate must be validated first.
+
+## What is built.
+
+| Area | Status | Included |
+| --- | --- | --- |
+| Shared agent core | Done | Provider boundary, Foundry adapter, streamed loop, context compaction, explicit approvals, reversible file changes. |
+| Web and Desktop | Done | Shared Flwn-branded UI, project/workspace views, streamed runs, reconnect, diff review and revert. |
+| Server mode | Done | PostgreSQL persistence, durable run events, interrupted-run recovery, project memory, quotas, tenant and team authorization. |
+| Accounts | Done | Better Auth, verification and password recovery flows, SMTP outbox, Google/GitHub identity-provider configuration, organization roles. |
+| CLI | Done | Foundry-backed interactive and one-shot modes, local durable session history, safe `/clear`, and opt-out with `--no-history`. |
+| VS Code | Done | Same core, trusted-workspace guard, SecretStorage credentials, native diff review and packaged VSIX. |
+
+## Next gate: runner isolation.
+
+The next engineering step is a real Linux validation environment. It must prove Docker plus gVisor behavior, container-escape resistance, disk quotas, backup/restore drills, and the complete Azure PostgreSQL + runner + Foundry stack. Until that gate passes, production signup remains deliberately disabled and multi-replica API deployment is not supported.
+
+## Deliberately deferred.
+
+| Item | Why it is deferred |
+| --- | --- |
+| Azure apply and live-stack testing | Needs deployment approval and the runner isolation gate. |
+| Production signup and API replicas | Depend on verified runner isolation and cross-replica approval routing. |
+| Flwn context and Flwn SSO | Wait for Flwn Data Engine and Auth contracts. |
+| Repo import and GitHub credentials | Needs a credential-storage and import-policy decision. |
+| Semantic memory | Needs an approved embedding deployment and retention policy; current project notes are textual and explicitly untrusted. |
+| Billing | Needs product and payment-provider decisions. |
+| Signed Desktop installer and extension publishing | Need signing certificate and marketplace publisher access. |
+| ACP interoperability | Needs the target ACP compatibility contract. |

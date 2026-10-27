@@ -14,6 +14,7 @@ import type { Approver, Message, ModelConfig, Risk } from '@oqelira/core'
 import { renderApproval } from './approval.js'
 import { loadEnvFiles } from './env.js'
 import { LineReader } from './lines.js'
+import { clearHistory, loadHistory, saveHistory } from './history.js'
 import { bold, cyan, dim, green, red, yellow } from './ui.js'
 
 const USAGE = `oqelira - AI coding agent by Flwn
@@ -29,6 +30,7 @@ Options:
       --yolo            auto-approve everything, including shell commands (use with care)
       --max-steps <n>   stop after n model steps (default 25)
       --env-file <f>    extra .env file (only FOUNDRY_/OQELIRA_/FLWN_/DATA_ keys are read)
+      --no-history      do not load or save the local interactive session history
       --list-models     show the available models
   -h, --help            show this help
 
@@ -36,7 +38,7 @@ In the session:  /model <id>   /clear   /help   /exit      Ctrl+C interrupts a r
 Project rules are read from OQELIRA.md (or AGENTS.md) in the project directory.
 `
 
-const SESSION_HELP = '/model <id>  switch model   /clear  forget the conversation   /exit  quit   Ctrl+C  interrupt'
+const SESSION_HELP = '/model <id>  switch model   /clear  forget saved conversation   /exit  quit   Ctrl+C  interrupt'
 
 function readProjectRules(cwd: string): string {
   for (const name of ['OQELIRA.md', 'AGENTS.md']) {
@@ -68,6 +70,7 @@ async function main(): Promise<number> {
         'max-steps': { type: 'string' },
         'env-file': { type: 'string' },
         'list-models': { type: 'boolean' },
+        'no-history': { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
       },
     })
@@ -212,7 +215,8 @@ async function main(): Promise<number> {
 
   // ---- interactive session
   out(`${bold('oqelira')} ${dim(`model ${model.id} (${model.api}) | ${cwd}`)}\n${dim(SESSION_HELP)}\n`)
-  let history: Message[] = []
+  let history: Message[] = values['no-history'] ? [] : await loadHistory(cwd)
+  if (history.length) out(`${dim(`restored ${history.length} local history messages`)}\n`)
   for (;;) {
     const line = await lines.next(`${bold('> ')}`)
     if (line === null) break
@@ -225,6 +229,7 @@ async function main(): Promise<number> {
     }
     if (text === '/clear') {
       history = []
+      if (!values['no-history']) await clearHistory(cwd)
       out(`${dim('conversation cleared')}\n`)
       continue
     }
@@ -247,7 +252,10 @@ async function main(): Promise<number> {
       continue
     }
     const result = await runTurn(text, history)
-    if (result.ok || result.messages !== history) history = result.messages
+    if (result.ok || result.messages !== history) {
+      history = result.messages
+      if (!values['no-history']) await saveHistory(cwd, history)
+    }
   }
   lines.close()
   return 0

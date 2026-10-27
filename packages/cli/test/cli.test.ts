@@ -220,6 +220,21 @@ test('interactive session: keeps history between turns, /clear forgets it, /exit
   })
 })
 
+test('interactive session restores local history and /clear removes it', async () => {
+  await workspace(async (cwd) => {
+    const mock = await startMock({ script: (_b, n) => ({ text: `answer ${n}` }) })
+    try {
+      await runCli(M, { cwd, baseURL: mock.baseURL, stdin: 'first question\n/exit\n' })
+      const history = path.join(cwd, '.oqelira', 'cli-history.json')
+      assert.match(await fs.readFile(history, 'utf8'), /first question/)
+      await runCli(M, { cwd, baseURL: mock.baseURL, stdin: 'second question\n/clear\n/exit\n' })
+      const users = mock.requests.at(-1)?.body.messages.filter((m: any) => m.role === 'user').map((m: any) => m.content)
+      assert.deepEqual(users, ['first question', 'second question'])
+      await assert.rejects(fs.access(history))
+    } finally { await mock.close() }
+  })
+})
+
 test('project rules in AGENTS.md are added to the system prompt', async () => {
   await workspace(async (cwd) => {
     await fs.writeFile(path.join(cwd, 'AGENTS.md'), 'Always use tabs, never spaces.')
