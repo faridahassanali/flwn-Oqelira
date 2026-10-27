@@ -6,9 +6,12 @@
     "packages/*"
   ],
   "scripts": {
-    "typecheck": "npm run typecheck -w @oqelira/core -w @oqelira/cli",
+    "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test -w @oqelira/core -w @oqelira/cli",
     "live": "npm run live -w @oqelira/core",
-    "oqelira": "node packages/cli/bin/oqelira.mjs"
+    "oqelira": "node packages/cli/bin/oqelira.mjs",
+    "web": "npm run dev -w @oqelira/web",
+    "desktop": "npm run start -w @oqelira/desktop",
+    "build": "npm run build -w @oqelira/web"
   }
 }

@@ -1,0 +1,14 @@
+{
+  "name": "@oqelira/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "main.mjs",
+  "scripts": {
+    "start": "npm run build -w @oqelira/web && electron .",
+    "check": "node --check main.mjs"
+  },
+  "devDependencies": {
+    "electron": "^42.0.0"
+  }
+}

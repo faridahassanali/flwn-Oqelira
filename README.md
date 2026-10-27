@@ -4,7 +4,28 @@
 reads the team's context (memory, decision ledger, tickets) from Flwn and helps members
 write code instead of writing it manually.
 
-Status: **pre-milestone-1**. We are validating the model-provider layer first.
+Status: **core + CLI foundation; Web and Desktop UI preview**. Flwn memory and auth are deferred.
+
+## Web and Desktop
+
+    npm install
+    npm run web          # local Vite preview
+    npm run build        # production web bundle
+    npm run desktop      # build shared renderer and launch Electron
+    npm run typecheck    # all TypeScript workspaces
+
+`packages/ui` owns the shared responsive workspace, pastel visual theme, conversation,
+preview tasks and context/files panels. `packages/web` mounts it with Vite;
+`packages/desktop` loads that exact built renderer in a sandboxed Electron window
+with Node integration disabled. No provider keys are exposed to either renderer.
+
+This first slice is an **in-memory interactive preview**, not a connected coding agent.
+Messages add preview tasks; no model requests, filesystem access, shell commands or
+Git actions run from the UI. Refreshing or creating a new session clears preview data.
+Explorer, Terminal, Git and Settings explain their pending host integration.
+Next: a typed host transport to core with streamed events and approval handling.
+All model calls must remain in `packages/core/src/providers/`. Flwn memory and auth
+remain deferred; future Flwn integrations must use one gateway.
 
 ## Layout
 
@@ -12,6 +33,9 @@ Status: **pre-milestone-1**. We are validating the model-provider layer first.
     docs/                      design notes and decisions
     packages/core/             provider interface, Foundry adapter, agent loop, tools, permissions
     packages/cli/              the `oqelira` command: interactive session + one-shot, approvals, previews
+    packages/ui/               shared Web + Desktop workspace UI
+    packages/web/              Vite browser entry point
+    packages/desktop/          sandboxed Electron shell
     packages/extension/        (next) VS Code extension - not created yet
 
 ## Quick start (Node >= 20.6)
