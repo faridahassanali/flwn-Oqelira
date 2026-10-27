@@ -134,3 +134,12 @@ An errored or unfinished model stream no longer becomes a completed task. Tool
 calls returned at the model output limit are recorded as not executed, preserving
 valid conversation history without applying a partial change. Review incomplete
 output before continuing. The worker image must be rebuilt to include search.
+
+## Production registration gate
+
+Production startup rejects `OQELIRA_ALLOW_SIGNUP=true` while verified email,
+account-recovery delivery and controlled team enrollment are unfinished. This
+is enforced in configuration, not just recommended in this document. Local
+signup remains available for development fixtures. See the
+[readiness and identity review](readiness-review.md) for the outstanding work,
+including the separate Flwn and standalone account entry paths.

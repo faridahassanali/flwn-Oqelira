@@ -2,6 +2,9 @@ export function serverConfig(env: NodeJS.ProcessEnv = process.env) {
   const required = (key: string) => { const value = env[key]?.trim(); if (!value) throw new Error(`Missing ${key}`); return value }
   const baseURL = new URL(required('OQELIRA_SERVER_URL'))
   const production = env.NODE_ENV === 'production'
+  // Verification, recovery delivery and team enrollment are not implemented yet.
+  // A deployment flag alone must not expose unverified production registration.
+  if (production && env.OQELIRA_ALLOW_SIGNUP === 'true') throw new Error('Public signup is unavailable in production until verified email, account recovery and team enrollment are implemented')
   if (production && baseURL.protocol !== 'https:') throw new Error('Production requires an HTTPS server URL')
   if (!['http:', 'https:'].includes(baseURL.protocol) || baseURL.username || baseURL.password || baseURL.pathname !== '/' || baseURL.search || baseURL.hash) throw new Error('OQELIRA_SERVER_URL must be an origin')
   const secret = required('OQELIRA_AUTH_SECRET')

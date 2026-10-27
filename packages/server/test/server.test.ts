@@ -41,6 +41,9 @@ function pglitePool(db: PGlite): Pool {
 test('configuration fails closed and sandbox arguments never mount the host or enable networking', () => {
   assert.throws(() => serverConfig({}), /Missing/)
   assert.throws(() => serverConfig({ OQELIRA_SERVER_URL: 'http://example.com', NODE_ENV: 'production' }), /HTTPS/)
+  const production = { NODE_ENV: 'production', OQELIRA_SERVER_URL: 'https://oqelira.example.test', OQELIRA_AUTH_SECRET: '09c264f90a634f0b9fca9bcf3c06d6f2d3d069192dc848ab', OQELIRA_DATABASE_URL: 'postgres://fixture?sslmode=verify-full' }
+  assert.equal(serverConfig(production).signup, false)
+  assert.throws(() => serverConfig({ ...production, OQELIRA_ALLOW_SIGNUP: 'true' }), /Public signup is unavailable/)
   const args = dockerArgs(randomUUID(), randomUUID(), 'oqelira-worker:test')
   assert.ok(args.includes('none')); assert.ok(args.includes('--read-only')); assert.ok(args.includes('1000:1000'))
   assert.ok(!args.some(a => a.includes('docker.sock') || a.includes('type=bind') || a === '--privileged'))
