@@ -79,7 +79,6 @@ test('agent loop: model reads a file via a tool call and answers from it (stream
     }
   })
 })
-
 test('permissions: write is denied without an approver, and the file is NOT created', async () => {
   await withWorkspace(async (cwd) => {
     const mock = await startMock({

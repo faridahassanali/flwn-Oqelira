@@ -70,5 +70,3 @@ test('team roles protect shared projects, invitations, runs and approvals; remov
   assert.equal((await request('/api/memory?projectId='+owned.id,admin.cookie)).status,404)
  }finally{await server.close();await db.close()}
 })
-
-
