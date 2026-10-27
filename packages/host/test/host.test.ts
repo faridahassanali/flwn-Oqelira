@@ -1,0 +1,164 @@
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import type { ModelProvider, ModelRequest } from '@oqelira/core'
+import type { HostEvent } from '@oqelira/protocol'
+import { createHost } from '../src/server.js'
+
+async function fixture(fn: (f: { cwd: string; origin: string; requests: ModelRequest[]; post: (route: string, body: unknown, extra?: Record<string, string>) => Promise<Response> }) => Promise<void>, timeout = 1000) {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'oqelira-host-'))
+  await fs.writeFile(path.join(cwd, 'hello.txt'), 'HELLO')
+  await fs.writeFile(path.join(cwd, 'index.html'), '<h1>Workspace</h1>')
+  const requests: ModelRequest[] = []
+  const provider: ModelProvider = { id: 'test', async *stream(req) {
+    requests.push({ ...req, messages: [...req.messages] })
+    const last = req.messages.at(-1)
+    if (last?.role === 'user' && last.content === 'fail') throw new Error('upstream credential: NEVER_ECHO_THIS')
+    if (last?.role === 'user' && last.content === 'write') {
+      yield { type: 'tool-call', call: { id: 'write-1', name: 'write_file', input: { path: 'result.txt', content: 'APPROVED' } } }
+      yield { type: 'finish', reason: 'tool-calls' }
+    } else if (last?.role === 'user' && last.content === 'read') {
+      yield { type: 'tool-call', call: { id: 'read-1', name: 'read_file', input: { path: 'hello.txt' } } }
+      yield { type: 'finish', reason: 'tool-calls' }
+    } else {
+      yield { type: 'text-delta', text: 'Hello ' }
+      yield { type: 'text-delta', text: 'world' }
+      yield { type: 'finish', reason: 'stop' }
+    }
+  } }
+  const host = createHost({ cwd, dist: cwd, models: [{ id: 'test', deployment: 'fixture-deployment', api: 'chat', speed: 'fast' }], configured: true, provider: () => provider, approvalTimeoutMs: timeout })
+  const origin = await host.listen()
+  const post = (route: string, body: unknown, extra: Record<string, string> = {}) => fetch(origin + route, {
+    method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', 'X-Oqelira-Client': 'workspace', ...extra }, body: JSON.stringify(body),
+  })
+  try { await fn({ cwd, origin, requests, post }) }
+  finally { await host.close(); await fs.rm(cwd, { recursive: true, force: true }) }
+}
+async function collect(response: Response, onEvent?: (event: HostEvent) => Promise<void>): Promise<HostEvent[]> {
+  assert.equal(response.status, 200)
+  const events: HostEvent[] = []
+  const reader = response.body!.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  try {
+    for (;;) {
+      const chunk = await reader.read()
+      if (chunk.done) return events
+      buffer += decoder.decode(chunk.value, { stream: true })
+      let i: number
+      while ((i = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, i); buffer = buffer.slice(i + 1)
+        if (!line.trim()) continue
+        const event = JSON.parse(line) as HostEvent
+        events.push(event)
+        await onEvent?.(event)
+      }
+    }
+  } finally { reader.releaseLock() }
+}
+
+test('host serves the renderer with CSP and exposes deployment metadata without credentials', async () => {
+  await fixture(async ({ origin }) => {
+    const response = await fetch(origin)
+    assert.match(response.headers.get('content-security-policy')!, /connect-src 'self'/)
+    assert.match(await response.text(), /Workspace/)
+    const config = await (await fetch(origin + '/api/config')).json()
+    assert.deepEqual(Object.keys(config).sort(), ['configured', 'models', 'workspace'])
+    assert.equal(config.models[0].deployment, 'fixture-deployment')
+  })
+})
+test('host rejects cross-origin, unmarked, malformed and invalid-model run requests', async () => {
+  await fixture(async ({ post }) => {
+    assert.equal((await post('/api/run', { prompt: 'hi', model: 'test' }, { Origin: 'https://untrusted.example' })).status, 403)
+    assert.equal((await post('/api/run', { prompt: 'hi', model: 'test' }, { 'X-Oqelira-Client': '' })).status, 403)
+    assert.equal((await post('/api/run', { prompt: 5, model: 'test' })).status, 400)
+    assert.equal((await post('/api/run', { prompt: 'hi', model: 'absent' })).status, 400)
+    assert.equal((await post('/api/run', null)).status, 400)
+    assert.equal((await post('/api/run', { prompt: 'hi', model: 'test', sessionId: 'unknown' })).status, 404)
+  })
+})
+test('host streams text and preserves server-owned history across turns', async () => {
+  await fixture(async ({ post, requests }) => {
+    const events = await collect(await post('/api/run', { prompt: 'hello', model: 'test' }))
+    assert.equal(events.filter(e => e.type === 'text').map(e => e.text).join(''), 'Hello world')
+    const started = events.find(e => e.type === 'started')!
+    assert.equal(started.type, 'started')
+    await collect(await post('/api/run', { prompt: 'continue', model: 'test', sessionId: started.sessionId }))
+    assert.equal(requests[1]!.messages.length, 3)
+    assert.equal(events.at(-1)?.type, 'done')
+  })
+})
+test('read tool executes without a write approval and returns actual file content', async () => {
+  await fixture(async ({ post }) => {
+    const events = await collect(await post('/api/run', { prompt: 'read', model: 'test' }))
+    assert.ok(!events.some(e => e.type === 'approval'))
+    assert.ok(events.some(e => e.type === 'tool-result' && e.output === 'HELLO'))
+  })
+})
+for (const allowed of [false, true]) {
+  test(`write tool waits for a matching approval; allowed=${allowed}`, async () => {
+    await fixture(async ({ post, cwd }) => {
+      let runId = ''
+      const events = await collect(await post('/api/run', { prompt: 'write', model: 'test' }), async event => {
+        if (event.type === 'started') runId = event.runId
+        if (event.type !== 'approval') return
+        await assert.rejects(fs.access(path.join(cwd, 'result.txt')))
+        assert.equal((await post('/api/approval', { runId, approvalId: 'wrong', allowed: true })).status, 409)
+        assert.equal((await post('/api/approval', { runId, approvalId: event.approval.id, allowed: 'yes' })).status, 400)
+        assert.equal((await post('/api/approval', { runId, approvalId: event.approval.id, allowed })).status, 200)
+        assert.equal((await post('/api/approval', { runId, approvalId: event.approval.id, allowed })).status, 409)
+      })
+      assert.ok(events.some(e => e.type === 'tool-result' && Boolean(e.isError) === !allowed))
+      if (allowed) assert.equal(await fs.readFile(path.join(cwd, 'result.txt'), 'utf8'), 'APPROVED')
+      else await assert.rejects(fs.access(path.join(cwd, 'result.txt')))
+    })
+  })
+}
+test('expired approvals fail closed without writing a file', async () => {
+  await fixture(async ({ post, cwd }) => {
+    const events = await collect(await post('/api/run', { prompt: 'write', model: 'test' }))
+    assert.ok(events.some(e => e.type === 'tool-result' && e.isError))
+    await assert.rejects(fs.access(path.join(cwd, 'result.txt')))
+  }, 30)
+})
+test('one run per session; disconnect cancels a pending approval', async () => {
+  await fixture(async ({ post, cwd }) => {
+    const response = await post('/api/run', { prompt: 'write', model: 'test' })
+    const reader = response.body!.getReader()
+    let text = ''
+    let runId = '', sessionId = '', approvalId = ''
+    while (!approvalId) {
+      const chunk = await reader.read()
+      assert.equal(chunk.done, false)
+      text += new TextDecoder().decode(chunk.value)
+      for (const line of text.split('\n').filter(Boolean)) {
+        let event: HostEvent
+        try { event = JSON.parse(line) as HostEvent } catch { continue }
+        if (event.type === 'started') { runId = event.runId; sessionId = event.sessionId }
+        if (event.type === 'approval') approvalId = event.approval.id
+      }
+    }
+    assert.equal((await post('/api/run', { prompt: 'hello', model: 'test', sessionId })).status, 409)
+    await reader.cancel()
+    // Acceptance of a new run proves the previous run released the session.
+    let next: Response | undefined
+    for (let i = 0; i < 20; i++) {
+      next = await post('/api/run', { prompt: 'hello', model: 'test', sessionId })
+      if (next.status === 200) break
+      await next.text()
+      await new Promise(resolve => setTimeout(resolve, 5))
+    }
+    await collect(next!)
+    assert.equal((await post('/api/approval', { runId, approvalId, allowed: true })).status, 409)
+    await assert.rejects(fs.access(path.join(cwd, 'result.txt')))
+  })
+})
+test('upstream errors never reveal provider diagnostics or credentials', async () => {
+  await fixture(async ({ post }) => {
+    const events = await collect(await post('/api/run', { prompt: 'fail', model: 'test' }))
+    assert.equal(events.at(-1)?.type, 'error')
+    assert.ok(!JSON.stringify(events).includes('NEVER_ECHO_THIS'))
+  })
+})

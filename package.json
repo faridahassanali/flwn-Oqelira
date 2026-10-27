@@ -7,10 +7,10 @@
   ],
   "scripts": {
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test -w @oqelira/core -w @oqelira/cli",
+    "test": "npm run test -w @oqelira/core -w @oqelira/cli -w @oqelira/host",
     "live": "npm run live -w @oqelira/core",
     "oqelira": "node packages/cli/bin/oqelira.mjs",
-    "web": "npm run dev -w @oqelira/web",
+    "web": "npm run build && npm run start -w @oqelira/host",
     "desktop": "npm run start -w @oqelira/desktop",
     "build": "npm run build -w @oqelira/web"
   }

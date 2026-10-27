@@ -4,26 +4,41 @@
 reads the team's context (memory, decision ledger, tickets) from Flwn and helps members
 write code instead of writing it manually.
 
-Status: **core + CLI foundation; Web and Desktop UI preview**. Flwn memory and auth are deferred.
+Status: **core + CLI foundation; connected local Web and Desktop workspace**. Flwn memory and auth are deferred.
 
 ## Web and Desktop
 
     npm install
-    npm run web          # local Vite preview
+    npm run web          # build and serve connected UI at http://127.0.0.1:4317
     npm run build        # production web bundle
     npm run desktop      # build shared renderer and launch Electron
     npm run typecheck    # all TypeScript workspaces
 
-`packages/ui` owns the shared responsive workspace, pastel visual theme, conversation,
-preview tasks and context/files panels. `packages/web` mounts it with Vite;
-`packages/desktop` loads that exact built renderer in a sandboxed Electron window
-with Node integration disabled. No provider keys are exposed to either renderer.
+`packages/ui` owns the shared responsive workspace, pastel theme, conversation,
+tool activity, tasks and context/files panels. `packages/web` bundles it with Vite;
+`packages/host` serves that bundle and runs the existing core on loopback only.
+Electron starts its own host on a free port and loads the same renderer with
+sandboxing and context isolation enabled and Node integration disabled.
 
-This first slice is an **in-memory interactive preview**, not a connected coding agent.
-Messages add preview tasks; no model requests, filesystem access, shell commands or
-Git actions run from the UI. Refreshing or creating a new session clears preview data.
-Explorer, Terminal, Git and Settings explain their pending host integration.
-Next: a typed host transport to core with streamed events and approval handling.
+Configure `FOUNDRY_KEY` and `FOUNDRY_ENDPOINT` in the root `.env` before starting.
+Provider keys stay in the host. The UI selects models from the host registry;
+override it with `OQELIRA_MODELS_JSON` (see `.env.example`).
+Set `OQELIRA_WORKSPACE` to choose a project; it is fixed for the life of the host.
+The default workspace is this repository. `OQELIRA_PORT` overrides the browser port.
+
+Chat replies and tool calls stream from core. Reads run automatically; each write,
+edit or shell command requires an explicit Allow once / Deny decision in the UI.
+Approval requests expire after two minutes. Stop/disconnect cancels the active run
+and denies outstanding approvals. Already approved changes are not rolled back.
+The host retains completed conversation history in memory for multi-turn tasks.
+New session or refresh starts a new conversation; restarting the host loses history.
+After an interrupted/failed run, the next request starts a fresh host conversation.
+
+Terminal shows command activity; Files lists successful write/edit tool paths for the
+current UI session (not a full Git diff). Browsable Explorer, Git diff/revert views,
+session persistence and installers are still pending. This is a local single-user
+development app, not a public server or packaged desktop distribution.
+See [the architecture and next tasks](docs/architecture.md).
 All model calls must remain in `packages/core/src/providers/`. Flwn memory and auth
 remain deferred; future Flwn integrations must use one gateway.
 
@@ -36,12 +51,14 @@ remain deferred; future Flwn integrations must use one gateway.
     packages/ui/               shared Web + Desktop workspace UI
     packages/web/              Vite browser entry point
     packages/desktop/          sandboxed Electron shell
+    packages/host/             local HTTP host, core runs and approval lifecycle
+    packages/protocol/         shared browser-safe transport contracts
     packages/extension/        (next) VS Code extension - not created yet
 
 ## Quick start (Node >= 20.6)
 
     npm install            # at the repo root (npm workspaces)
-    npm test               # 12 mock-server tests, no network needed
+    npm test               # core, CLI and host tests; local mock servers only
     copy .env.example .env # at the repo root; fill FOUNDRY_ENDPOINT / FOUNDRY_KEY (never commit .env)
     npm run live           # real Foundry: streaming + tools, permissions, edit + run
 
