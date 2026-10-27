@@ -1,0 +1,26 @@
+{
+  "name": "@oqelira/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/provider.test.ts test/loop.test.ts",
+    "live": "node --env-file=../../.env --import tsx scripts/live-check.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^4.0.101",
+    "@ai-sdk/openai-compatible": "^3.0.75",
+    "ai": "^7.0.148"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts"
+}

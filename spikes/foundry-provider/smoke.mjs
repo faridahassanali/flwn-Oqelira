@@ -1,9 +1,9 @@
 // Cross-platform smoke test (Windows/macOS/Linux). Tries each model on each Foundry route
 // and prints the HTTP status, so we can see what works where.
 //
-// Usage:  npm run smoke        (reads .env)
+// Usage:  npm run smoke        (reads the .env at the repo root)
 //
-// Needs in .env: FOUNDRY_KEY and either FOUNDRY_RESOURCE (just the name, e.g. aif-flwn-fc-01)
+// Needs in the root .env: FOUNDRY_KEY and either FOUNDRY_RESOURCE (just the name, e.g. aif-flwn-fc-01)
 // or FOUNDRY_ENDPOINT (any of your hosts; the resource name is taken from it).
 
 const key = process.env.FOUNDRY_KEY

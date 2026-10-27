@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "smoke": "node --env-file=.env smoke.mjs",
-    "spike": "tsx --env-file=.env spike.ts",
+    "smoke": "node --env-file=../../.env smoke.mjs",
+    "spike": "tsx --env-file=../../.env spike.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

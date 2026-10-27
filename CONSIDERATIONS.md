@@ -21,15 +21,35 @@ Decision: the model registry carries an `api: 'chat' | 'responses'` field (and o
 with tools); `chat-none` is the fallback / fast mode. The agent loop never knows which.
 Details: `docs/spike-results.md`.
 
-## Open: things the spike did not cover
-- Streaming **together with** tools (`streamText` + tool calls). The spike streamed text only and
-  ran tools with `generateText`. The real agent streams tool calls; test this before milestone 1 ends.
-- Parallel tool calls, large tool outputs, long contexts, request abort/cancel.
-- `/responses` storage: set `store: false` explicitly so code is not retained server-side;
-  verify the provider default and Azure behavior.
-- Pick one route (A `openai.azure.com` is the documented one; the spike ran on B
-  `services.ai.azure.com`). Re-run on A before locking config.
-- Latency numbers are single runs; repeat before using them for role assignment.
+## Done: validated on real Foundry (2026-10-23, Windows)
+`npm run live` passed 12/12 (3 models x 4 scenarios) on `openai.azure.com/openai/v1`: streaming + tools
+together (incl. `/responses` for gpt-6-*), approved write, denied write (no retry loop), edit + run_command.
+The Foundry provider question is closed. Remaining items below are hardening, not blockers.
+
+## Done: CLI (`packages/cli`)
+Interactive session + one-shot, streaming output, tool call trace, write/edit previews (- / +) with
+y/n/always approval, `--yes` (writes only) and `--yolo`, history across turns, `/model` `/clear` `/exit`,
+Ctrl+C interrupt, project rules from OQELIRA.md / AGENTS.md. 13 tests drive the real binary against a mock model.
+
+## Not built yet (be explicit about these)
+- **Flwn context** (memory recall, decision ledger, tickets): the product's differentiator. Plan: a `recall_context`
+  tool that mints a workspace token at the data engine (`/auth/tokens`) and calls `memory_recall` over `/mcp`,
+  the same way `flwn-ai/agents/memory_steward/mcp_link.py` does. `check_conflict` needs an endpoint in flwn-ai.
+- **VS Code extension**, **ACP mode**, **backend / login / team-managed keys**.
+
+## Open: validate on real Foundry (remaining hardening)
+`packages/core` has the provider interface, registry, Foundry adapter, agent loop, tools and permissions.
+12 mock-server tests pass (streamed text, streamed tool-call args, max_tokens fallback, multi-turn shape,
+permissions, workspace/symlink confinement, edit_file, run_command env scrubbing, maxSteps).
+Still unverified until `npm run live` is run against Foundry:
+- **Streaming together with tools** on each model, especially `/responses` (the mock only speaks chat completions).
+- Edit + run_command flow driven by a real model.
+- Parallel tool calls, large tool outputs, long contexts, abort/cancel.
+- `/responses` runs with `store: false` (set in the adapter). Because we drop reasoning items between steps,
+  the model re-reasons every step; check whether that costs latency/quality on long tasks.
+- Pick one route (A `openai.azure.com` is the documented one; the spike ran on B `services.ai.azure.com`).
+- Latency numbers are single runs.
+- Tests were run on Linux; confirm on Windows (shell quoting in the run_command test, symlink test skips without privilege).
 
 ## Open: flwn-ai still depends on the retired route
 `foundry/client.py`, `requirements.txt`, rerank, and `app/tools/coding_agent.py` (LiteLLM

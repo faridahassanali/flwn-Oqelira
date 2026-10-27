@@ -1,0 +1,20 @@
+{
+  "name": "@oqelira/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": { "oqelira": "bin/oqelira.mjs" },
+  "scripts": {
+    "start": "node bin/oqelira.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/cli.test.ts"
+  },
+  "dependencies": {
+    "@oqelira/core": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

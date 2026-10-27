@@ -1,0 +1,14 @@
+{
+  "name": "flwn-oqelira",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "typecheck": "npm run typecheck -w @oqelira/core -w @oqelira/cli",
+    "test": "npm run test -w @oqelira/core -w @oqelira/cli",
+    "live": "npm run live -w @oqelira/core",
+    "oqelira": "node packages/cli/bin/oqelira.mjs"
+  }
+}
