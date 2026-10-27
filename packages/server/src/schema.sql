@@ -62,6 +62,22 @@ CREATE TABLE IF NOT EXISTS oq_run_events (
 );
 CREATE INDEX IF NOT EXISTS oq_run_events_replay ON oq_run_events(user_id,run_id,sequence);
 
+CREATE TABLE IF NOT EXISTS oq_run_approvals (
+  id uuid PRIMARY KEY,
+  user_id text NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+  session_id text NOT NULL,
+  conversation_id uuid NOT NULL,
+  run_id uuid NOT NULL,
+  tool text NOT NULL,
+  allowed boolean,
+  decided_by text REFERENCES "user"(id) ON DELETE SET NULL,
+  expires_at timestamptz NOT NULL,
+  decided_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY(user_id, conversation_id) REFERENCES oq_conversations(user_id, id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS oq_run_approvals_pending ON oq_run_approvals(user_id,run_id,expires_at);
+
 CREATE TABLE IF NOT EXISTS oq_account_mail (
  id uuid PRIMARY KEY,
  payload jsonb NOT NULL,

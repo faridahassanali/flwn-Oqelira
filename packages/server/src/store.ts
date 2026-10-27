@@ -16,6 +16,18 @@ export class Store {
   async runState(user:string,run:string) {
     return (await this.pool.query('SELECT event FROM oq_run_events WHERE user_id=$1 AND run_id=$2 ORDER BY sequence DESC LIMIT 1',[user,run])).rows[0]?.event as HostEvent|undefined
   }
+  async createApproval(user:string,session:string,conversation:string,run:string,id:string,tool:string) {
+    await this.pool.query("INSERT INTO oq_run_approvals(id,user_id,session_id,conversation_id,run_id,tool,expires_at) VALUES($1,$2,$3,$4,$5,$6,now()+interval '2 minutes')",[id,user,session,conversation,run,tool])
+  }
+  async pendingApproval(user:string,session:string,run:string,id:string) {
+    return (await this.pool.query("SELECT c.project_id FROM oq_run_approvals a JOIN oq_conversations c ON c.id=a.conversation_id WHERE a.id=$4 AND a.user_id=$1 AND a.session_id=$2 AND a.run_id=$3 AND a.allowed IS NULL AND a.expires_at>now()",[user,session,run,id])).rows[0] as {project_id:string}|undefined
+  }
+  async decideApproval(user:string,session:string,run:string,id:string,actor:string,allowed:boolean) {
+    return (await this.pool.query("UPDATE oq_run_approvals SET allowed=$6,decided_by=$5,decided_at=now() WHERE id=$4 AND user_id=$1 AND session_id=$2 AND run_id=$3 AND allowed IS NULL AND expires_at>now() RETURNING conversation_id,tool",[user,session,run,id,actor,allowed])).rows[0] as {conversation_id:string;tool:string}|undefined
+  }
+  async approvalDecision(user:string,run:string,id:string) {
+    return (await this.pool.query('SELECT allowed FROM oq_run_approvals WHERE id=$3 AND user_id=$1 AND run_id=$2',[user,run,id])).rows[0]?.allowed as boolean|undefined
+  }
   async takeQuota(user: string, bucket: string, limit: number, windowSeconds: number) {
     const window = Math.floor(Date.now() / (windowSeconds * 1000))
     const result = await this.pool.query('INSERT INTO oq_quota(user_id,bucket,window_id,used) VALUES($1,$2,$3,1) ON CONFLICT(user_id,bucket) DO UPDATE SET window_id=$3,used=CASE WHEN oq_quota.window_id=$3 THEN oq_quota.used+1 ELSE 1 END WHERE oq_quota.window_id<>$3 OR oq_quota.used<$4 RETURNING used', [user, bucket, window, limit])
