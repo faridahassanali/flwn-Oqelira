@@ -49,7 +49,7 @@ export function createCloudServer(opts: Options) {
       try { name = decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname) } catch { throw new HttpError(400, 'Invalid path') }
       const file = path.resolve(opts.dist, '.' + name), relative = path.relative(opts.dist, file)
       if (relative.startsWith('..') || path.isAbsolute(relative)) throw new HttpError(403, 'Invalid path')
-      const types: Record<string, string> = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.jpg': 'image/jpeg' }
+      const types: Record<string, string> = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ico': 'image/x-icon', '.png': 'image/png' }
       let bytes: Buffer
       try { bytes = await fs.readFile(file) } catch { throw new HttpError(404, 'Not found') }
       res.writeHead(200, { 'Content-Type': types[path.extname(file)] ?? 'application/octet-stream' }); res.end(bytes); return

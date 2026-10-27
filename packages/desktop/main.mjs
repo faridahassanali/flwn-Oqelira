@@ -1,6 +1,9 @@
 import { app, BrowserWindow, dialog } from 'electron'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+
+const canvasColor = readFileSync(new URL('../ui/src/tokens.css', import.meta.url), 'utf8').match(/--cream:\s*(#[a-f\d]{6})/i)?.[1]
 
 let host
 let origin
@@ -26,7 +29,7 @@ async function startHost() {
 function createWindow() {
   const window = new BrowserWindow({
     width: 1480, height: 980, minWidth: 800, minHeight: 600,
-    backgroundColor: '#fcfbf8', title: 'Oqelira · by Flwn',
+    backgroundColor: canvasColor, title: 'Oqelira · by Flwn',
     webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true },
   })
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))

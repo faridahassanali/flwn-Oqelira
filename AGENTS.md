@@ -9,3 +9,5 @@
 - No secrets in the repo. `.env` is ignored; keep `.env.example` current.
 - Anything that needs Flwn context (memory, ledger, tickets) goes through one gateway
   module, so the integration can change in one place.
+- UI changes follow `.agents/skills/flwn-design/SKILL.md`, pinned from the official
+  Flwn design repository. Use its tokens and original assets; do not invent colors or logos.

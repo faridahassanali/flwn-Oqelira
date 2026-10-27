@@ -7,7 +7,12 @@
     ".": "./src/index.ts",
     "./style.css": "./src/style.css"
   },
-  "dependencies": { "@oqelira/protocol": "*" },
+  "dependencies": {
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@fontsource-variable/plus-jakarta-sans": "^5.3.0",
+    "@oqelira/protocol": "*",
+    "lucide": "^1.62.0"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit"
   }

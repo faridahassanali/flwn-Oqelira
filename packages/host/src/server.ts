@@ -139,7 +139,7 @@ export function createHost(opts: HostOptions) {
     if (rel.startsWith('..') || path.isAbsolute(rel)) throw new HttpError(403, 'Invalid path')
     let bytes: Buffer
     try { bytes = await fs.readFile(file) } catch { throw new HttpError(404, 'Build the web workspace first') }
-    const types: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' }
+    const types: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ico': 'image/x-icon', '.png': 'image/png' }
     res.writeHead(200, {
       'Content-Type': types[path.extname(file)] ?? 'application/octet-stream',
       'X-Content-Type-Options': 'nosniff',
