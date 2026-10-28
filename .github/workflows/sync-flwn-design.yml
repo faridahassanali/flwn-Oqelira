@@ -20,7 +20,7 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/a-elhaag/flwn-design.git /tmp/skill
           mkdir -p "$SKILL_DIR"
-          rsync -a --delete /tmp/skill/flwn-design/ "$SKILL_DIR"/
+          rsync -a --no-links --delete /tmp/skill/flwn-design/ "$SKILL_DIR"/
           [ -z "$(git status --porcelain "$SKILL_DIR")" ] && { echo "already up to date"; exit 0; }
           git config user.name "flwn-design-sync"
           git config user.email "noreply@github.com"
