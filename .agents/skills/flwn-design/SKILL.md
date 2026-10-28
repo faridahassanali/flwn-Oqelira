@@ -505,3 +505,5 @@ fontFamily: { sans: ['"Plus Jakarta Sans"', 'Inter', 'system-ui', 'sans-serif'] 
 ```
 
 Usage: `bg-pastel-green`, `bg-pastel-lavender`, `bg-cream`, `text-ink`, `text-navy`, `text-ink-soft`, `border-line`, `rounded-flwn`, `rounded-flwn-sm`, `shadow-flwn`. Tailwind spacing is already rem. Secondary text on pastel: `text-ink/70`.
+
+<!-- sync test 11:06 -->
