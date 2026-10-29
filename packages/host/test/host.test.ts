@@ -20,6 +20,7 @@ function script(body: any): Reply {
   return { text: 'Hello world' }
 }
 
+const TOKEN = 'x'.repeat(40)
 async function fixture(fn: (f: { cwd: string; origin: string; requests: any[]; post: (route: string, body: unknown, extra?: Record<string, string>) => Promise<Response> }) => Promise<void>, timeout = 1000) {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'oqelira-host-'))
   await fs.writeFile(path.join(cwd, 'hello.txt'), 'HELLO')
@@ -27,10 +28,10 @@ async function fixture(fn: (f: { cwd: string; origin: string; requests: any[]; p
   const mock = await startMock({ script })
   const env = { ...process.env, OQELIRA_NO_ENV_FILES: '1', FOUNDRY_BASE_URL: mock.baseURL, FOUNDRY_KEY: 'test-key' }
   const models = [{ id: 'mai-thinking', deployment: 'MAI-Thinking-1', api: 'chat' as const, speed: 'slow' as const }]
-  const host = createHost({ cwd, dist: cwd, models, configured: true, startEngine: () => spawnEngine({ cwd, env, args: ['--approval-timeout-ms', String(timeout)] }) })
+  const host = createHost({ cwd, dist: cwd, models, configured: true, launchToken: TOKEN, startEngine: () => spawnEngine({ cwd, env, args: ['--approval-timeout-ms', String(timeout)] }) })
   const origin = await host.listen()
   const post = (route: string, body: unknown, extra: Record<string, string> = {}) => fetch(origin + route, {
-    method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', 'X-Oqelira-Client': 'workspace', ...extra }, body: JSON.stringify(body),
+    method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', 'X-Oqelira-Client': 'workspace', 'X-Oqelira-Launch': TOKEN, ...extra }, body: JSON.stringify(body),
   })
   try { await fn({ cwd, origin, requests: mock.requests, post }) }
   finally { await host.close(); await mock.close(); await fs.rm(cwd, { recursive: true, force: true }) }
@@ -60,10 +61,10 @@ async function collect(response: Response, onEvent?: (event: HostEvent) => Promi
 
 test('host serves the renderer with CSP and exposes deployment metadata without credentials', async () => {
   await fixture(async ({ origin }) => {
-    const response = await fetch(origin)
+    const response = await fetch(origin, { headers: { 'X-Oqelira-Launch': TOKEN } })
     assert.match(response.headers.get('content-security-policy')!, /connect-src 'self'/)
     assert.match(await response.text(), /Workspace/)
-    const config = await (await fetch(origin + '/api/config')).json()
+    const config = await (await fetch(origin + '/api/config', { headers: { 'X-Oqelira-Launch': TOKEN } })).json()
     assert.deepEqual(Object.keys(config).sort(), ['configured', 'models', 'workspace'])
     assert.equal(config.models[0].deployment, 'MAI-Thinking-1')
   })
@@ -170,11 +171,30 @@ test('the engine never reads the workspace .env, so a project cannot redirect th
   const env: NodeJS.ProcessEnv = { ...process.env, FOUNDRY_ENDPOINT: mock.baseURL.replace(/\/v1$/, ''), FOUNDRY_KEY: 'test-key' }
   for (const k of ['OQELIRA_NO_ENV_FILES', 'FOUNDRY_BASE_URL']) delete env[k]
   const models = [{ id: 'mai-thinking', deployment: 'MAI-Thinking-1', api: 'chat' as const, speed: 'slow' as const }]
-  const host = createHost({ cwd, dist: cwd, models, configured: true, startEngine: () => spawnEngine({ cwd, env }) })
+  const host = createHost({ cwd, dist: cwd, models, configured: true, launchToken: TOKEN, startEngine: () => spawnEngine({ cwd, env }) })
   const origin = await host.listen()
   try {
-    const events = await collect(await fetch(origin + '/api/run', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', 'X-Oqelira-Client': 'workspace' }, body: JSON.stringify({ prompt: 'hello', model: 'mai-thinking' }) }))
+    const events = await collect(await fetch(origin + '/api/run', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', 'X-Oqelira-Client': 'workspace', 'X-Oqelira-Launch': TOKEN }, body: JSON.stringify({ prompt: 'hello', model: 'mai-thinking' }) }))
     assert.equal(events.filter((e) => e.type === 'text').map((e) => e.text).join(''), 'Hello world')
     assert.equal(mock.requests.length, 1)
   } finally { await host.close(); await mock.close(); await fs.rm(cwd, { recursive: true, force: true }) }
+})
+
+test('a browser tab cannot use the host: every request needs the desktop launch token', async () => {
+  await fixture(async ({ origin, post }) => {
+    assert.equal((await fetch(origin)).status, 403)
+    assert.equal((await fetch(origin + '/api/config')).status, 403)
+    assert.equal((await fetch(origin + '/api/config', { headers: { 'X-Oqelira-Launch': 'wrong'.padEnd(40, 'x') } })).status, 403)
+    assert.equal((await post('/api/run', { prompt: 'hi', model: 'mai-thinking' }, { 'X-Oqelira-Launch': 'short' })).status, 403)
+    assert.equal((await post('/api/approval', { runId: 'r', approvalId: 'a', allowed: true }, { 'X-Oqelira-Launch': '' })).status, 403)
+  })
+})
+test('the host process refuses to start without a launch token', async () => {
+  const { spawnSync } = await import('node:child_process')
+  const main = path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'src', 'main.ts')
+  const env = { ...process.env, OQELIRA_NO_ENV_FILES: '1' } as NodeJS.ProcessEnv
+  delete env.OQELIRA_LAUNCH_TOKEN
+  const r = spawnSync(process.execPath, ['--import', 'tsx', main], { env, encoding: 'utf8', timeout: 20_000 })
+  assert.equal(r.status, 2)
+  assert.match(r.stderr, /desktop app/)
 })

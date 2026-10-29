@@ -14,8 +14,9 @@ and calls `runAgent` with the existing provider interface and built-in tools.
 Provider adapters remain the only modules that import model SDKs. The CLI and host
 share the restricted environment-file loader exported by core.
 
-For Web, `npm run web` builds and starts the host on port 4317. For Desktop,
-Electron starts a child host on a free port, receives its address over IPC, and
+There is no browser mode. Electron starts a child host on a free port with a per-launch secret
+(`OQELIRA_LAUNCH_TOKEN`, which the host requires as `X-Oqelira-Launch` on every request and
+Electron attaches to its own requests), receives the address over IPC, and
 loads it in a sandboxed, context-isolated window. The child exits on IPC disconnect.
 Electron disables Node integration and denies renderer navigation and new windows,
 following [Electron security guidance](https://www.electronjs.org/docs/latest/tutorial/security).

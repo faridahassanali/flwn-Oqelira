@@ -1,5 +1,6 @@
 import { createServer } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { timingSafeEqual } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { ModelConfig } from '@oqelira/core'
@@ -11,6 +12,8 @@ interface HostOptions {
   dist: string
   models: readonly ModelConfig[]
   configured: boolean
+  /** Per-launch secret from the desktop app. Requests without it are refused, so a browser tab cannot use the host. */
+  launchToken: string
   /** Starts (or restarts) the engine this host is an interface to. */
   startEngine: () => EngineClient
 }
@@ -35,8 +38,8 @@ async function json(req: IncomingMessage): Promise<Record<string, unknown>> {
 }
 
 /**
- * Local single-user host: a browser-facing interface to the engine (`oqelira serve`). It owns the HTTP
- * security (origin, CSRF header, CSP) and nothing about the agent. One origin, fixed workspace.
+ * Internal host of the desktop app: the window's interface to the engine. It owns the HTTP security
+ * (launch token, origin, CSRF header, CSP) and nothing about the agent. One origin, fixed workspace.
  */
 export function createHost(opts: HostOptions) {
   const sessions = new Set<string>()
@@ -52,6 +55,9 @@ export function createHost(opts: HostOptions) {
     // Host validation also prevents DNS rebinding; no permissive CORS headers.
     if (req.headers.host !== new URL(origin).host) throw new HttpError(403, 'Invalid host')
     if (req.headers.origin && req.headers.origin !== origin) throw new HttpError(403, 'Invalid origin')
+    const token = Buffer.from(String(req.headers['x-oqelira-launch'] ?? ''))
+    const expected = Buffer.from(opts.launchToken)
+    if (token.length !== expected.length || !timingSafeEqual(token, expected)) throw new HttpError(403, 'Open Oqelira from the desktop app')
     const url = new URL(req.url ?? '/', origin)
     if (url.pathname.startsWith('/api/')) {
       if (req.method === 'POST' && (req.headers.origin !== origin || req.headers['x-oqelira-client'] !== 'workspace')) {

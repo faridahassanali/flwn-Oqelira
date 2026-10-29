@@ -10,7 +10,6 @@
     "test": "npm run test -w @oqelira/core -w @oqelira/engine -w @oqelira/cli -w @oqelira/host -w @oqelira/server -w @oqelira/worker -w oqelira-vscode",
     "live": "npm run live -w @oqelira/core",
     "oqelira": "node packages/cli/bin/oqelira.mjs",
-    "web": "npm run build && npm run start -w @oqelira/host",
     "desktop": "npm run start -w @oqelira/desktop",
     "build": "npm run build -w @oqelira/web && npm run build -w oqelira-vscode",
     "setup:server": "node --import tsx scripts/setup-server.ts",
