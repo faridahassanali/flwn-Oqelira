@@ -2,7 +2,7 @@ import * as vscode from 'vscode'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { builtinTools, createFoundry, runAgent, DEFAULT_SYSTEM, snapshotFile, readFileChange, applyFileChange } from '@oqelira/core'
+import { builtinTools, webTools, createFoundry, runAgent, DEFAULT_SYSTEM, snapshotFile, readFileChange, applyFileChange } from '@oqelira/core'
 import type { Message, ModelConfig, ApprovalRequest } from '@oqelira/core'
 import { foundryEndpoint, secretName } from './policy.js'
 
@@ -84,7 +84,7 @@ export function activate(context:vscode.ExtensionContext) {
     try{
       let rules=''
       for(const name of ['OQELIRA.md','AGENTS.md']){try{rules='\n\nProject instructions:\n'+(await fs.readFile(path.join(folder.uri.fsPath,name),'utf8')).slice(0,20000);break}catch{}}
-      const result=await runAgent({cwd:folder.uri.fsPath,prompt,history,provider:createFoundry({baseURL:endpoint,apiKey:key})(setup.model),system:DEFAULT_SYSTEM+rules,tools:builtinTools,signal:controller.signal,
+      const result=await runAgent({cwd:folder.uri.fsPath,prompt,history,provider:createFoundry({baseURL:endpoint,apiKey:key})(setup.model),system:DEFAULT_SYSTEM+rules,tools:[...builtinTools,...webTools()],signal:controller.signal,
         permissions:{autoAllow:['read'],approve:request=>review(request,folder.uri.fsPath,controller.signal)},onText:delta=>output.append(delta),onToolCall:call=>output.appendLine('\nTool: '+call.name),onToolResult:result=>{
           output.appendLine((result.isError?'Failed: ':'Result: ')+result.output)
           if(!result.isError&&['apply_file_change','revert_file_change'].includes(result.name)){try{const change=JSON.parse(result.output) as {change_id:string;path:string};recentChanges.unshift({label:change.path,id:change.change_id,cwd:folder.uri.fsPath});recentChanges.splice(100)}catch{}}

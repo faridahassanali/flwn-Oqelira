@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { runAgent, builtinTools, DEFAULT_SYSTEM } from '@oqelira/core'
+import { runAgent, builtinTools, webTools, DEFAULT_SYSTEM } from '@oqelira/core'
 import type { Message, ModelConfig, ModelProvider } from '@oqelira/core'
 import type { HostEvent } from '@oqelira/protocol'
 
@@ -105,7 +105,7 @@ export function createHost(opts: HostOptions) {
         }
         const result = await runAgent({
           cwd: opts.cwd, provider, prompt: body.prompt.trim(), history: session.history,
-          tools: builtinTools, system: DEFAULT_SYSTEM + rules, signal: run.controller.signal,
+          tools: [...builtinTools, ...webTools()], system: DEFAULT_SYSTEM + rules, signal: run.controller.signal,
           permissions: { autoAllow: ['read'], approve: request => new Promise<boolean>(resolve => {
             if (run.controller.signal.aborted) { resolve(false); return }
             const id = randomUUID()

@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 /** Only these prefixes are taken from .env files, so a project's unrelated secrets never enter our process. */
-const ALLOWED = /^(FOUNDRY_|OQELIRA_|FLWN_|DATA_)/
+const ALLOWED = /^(FOUNDRY_|OQELIRA_|FLWN_|DATA_|TAVILY_API_KEY$)/
 
 export function parseEnv(text: string): Record<string, string> {
   const out: Record<string, string> = {}

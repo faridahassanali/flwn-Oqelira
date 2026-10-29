@@ -5,6 +5,7 @@ import {
   DEFAULT_MODELS,
   DEFAULT_SYSTEM,
   builtinTools,
+  webTools,
   createFoundry,
   findModel,
   foundryConfigFromEnv,
@@ -155,13 +156,15 @@ async function main(): Promise<number> {
     }
   })
 
+  const tools = [...builtinTools, ...webTools()]
+
   async function runTurn(prompt: string, history: Message[]): Promise<{ ok: boolean; messages: Message[] }> {
     current = new AbortController()
     try {
       const result = await runAgent({
         provider: makeProvider(model),
         prompt,
-        tools: builtinTools,
+        tools,
         cwd,
         system,
         history,
@@ -172,7 +175,7 @@ async function main(): Promise<number> {
         onContextCompacted: () => out(`${dim('Older context compacted for this request; full conversation history is retained.')}\n`),
         onToolCall: (call) => {
           ensureNewline()
-          const tool = builtinTools.find((t) => t.spec.name === call.name)
+          const tool = tools.find((t) => t.spec.name === call.name)
           let summary = call.name
           try {
             summary = tool ? tool.describe(call.input) : call.name
