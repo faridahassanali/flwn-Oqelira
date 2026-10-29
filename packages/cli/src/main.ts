@@ -1,5 +1,5 @@
 import { parseArgs } from 'node:util'
-import { DEFAULT_MODELS } from '@oqelira/core'
+import { DEFAULT_MODELS, plainText } from '@oqelira/core'
 import type { Approver, Risk } from '@oqelira/core'
 import { renderApproval } from './approval.js'
 import { createEngine, serve } from '@oqelira/engine'
@@ -148,7 +148,7 @@ async function main(): Promise<number> {
         onEvent: (e) => {
           switch (e.type) {
             case 'text':
-              out(e.text)
+              out(plainText(e.text)) // streamed deltas: ESC is stripped, so a split sequence is just inert text
               break
             case 'context-compacted':
               out(`${dim('Older context compacted for this request; full conversation history is retained.')}\n`)
@@ -235,7 +235,7 @@ async function main(): Promise<number> {
         out(`${dim('Project memory is off. Set OQELIRA_EMBEDDING_DEPLOYMENT to enable it.')}\n`)
       } else {
         const entries = await engine.memories(20)
-        out(entries.length ? entries.map((m) => `${dim(`[${m.id.slice(0, 8)}]`)}${m.status === 'pending' ? yellow(' (pending review)') : ''} ${m.text}`).join('\n') + '\n' : `${dim('no saved memory yet')}\n`)
+        out(entries.length ? entries.map((m) => `${dim(`[${m.id.slice(0, 8)}]`)}${m.status === 'pending' ? yellow(' (pending review)') : ''} ${plainText(m.text)}`).join('\n') + '\n' : `${dim('no saved memory yet')}\n`)
       }
       continue
     }

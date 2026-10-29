@@ -68,6 +68,15 @@ Declining stores nothing and is not asked again for the same messages. Recalled 
 The pattern filter is a backstop, not a guarantee. Sessions are marked as mined only after a successful
 extraction, so a failure retries next time.
 
+## Terminal safety
+
+Anything model- or file-sourced that is printed in a terminal goes through `plainText` (core): escape sequences
+(CSI, OSC titles and hyperlinks), control characters (including `\r` and backspace), and invisible or
+reordering characters (zero-width space, BOM, bidi overrides) are removed, so output cannot move the cursor,
+erase lines or hide text to spoof an approval prompt. Newlines, tabs and real Unicode (Persian ZWNJ, RTL marks,
+emoji joiners) are kept. In the CLI every style helper applies it, so styled text is safe by construction;
+extracted memory facts are cleaned at the source too. New interfaces must escape or sanitize the same way.
+
 ## Phases
 
 1. **Done:** `createEngine` ([engine.ts](../packages/engine/src/engine.ts)), the terminal CLI on top of it,

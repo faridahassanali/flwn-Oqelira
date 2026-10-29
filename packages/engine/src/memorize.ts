@@ -1,3 +1,4 @@
+import { plainText } from '@oqelira/core'
 import type { ContextGateway, Message, MemoryEntry, ModelProvider } from '@oqelira/core'
 
 const SYSTEM = [
@@ -24,7 +25,7 @@ export function parseFacts(text: string): string[] {
   if (start < 0 || end < start) throw new Error('no JSON array in the reply')
   const value: unknown = JSON.parse(body.slice(start, end + 1))
   if (!Array.isArray(value)) throw new Error('reply is not an array')
-  return value.filter((v): v is string => typeof v === 'string').map((v) => v.replace(/\s+/g, ' ').trim()).filter((v) => v.length >= 8).slice(0, 5)
+  return value.filter((v): v is string => typeof v === 'string').map((v) => plainText(v).replace(/\s+/g, ' ').trim()).filter((v) => v.length >= 8).slice(0, 5)
 }
 
 const SECRET = /(api[_-]?key|token|password|passwd|secret|bearer|private key)\s*[:=]?\s*\S{6,}|-----BEGIN [A-Z ]*PRIVATE KEY|\b(sk|ghp|gho|xox[bap])[-_][A-Za-z0-9_-]{16,}/i

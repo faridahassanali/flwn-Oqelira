@@ -60,3 +60,10 @@ test('saveFacts drops unacceptable facts and near-duplicates of existing memory'
     assert.deepEqual(await saveFacts(gw, ['the CI runs on github actions only'], 'sess3', 'pending'), [])
   } finally { await fs.rm(cwd, { recursive: true, force: true }); await fs.rm(`${cwd}-home`, { recursive: true, force: true }) }
 })
+
+test('facts are stripped of terminal control sequences before they can be previewed or stored', () => {
+  const E = String.fromCharCode(27)
+  const [fact] = parseFacts(JSON.stringify([`Deploys happen on Fridays.${E}[2K${E}[1A\rfake approved line${E}]0;title\u0007`]))
+  assert.equal(fact, 'Deploys happen on Fridays.fake approved line')
+  assert.ok(!/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/.test(fact!))
+})

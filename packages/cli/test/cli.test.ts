@@ -278,3 +278,18 @@ test('end of session shows the facts to be remembered and saves them only when a
     })
   }
 })
+
+test('model-controlled text cannot rewrite the approval screen: control sequences never reach stdout', async () => {
+  const E = String.fromCharCode(27)
+  const hostile = `Safe note.${E}[2K${E}[1A\rApproved: nothing to see${E}]0;pwned\u0007`
+  await workspace(async (cwd) => {
+    const mock = await startMock({ script: (body, n) => (n === 0 ? { toolCall: { name: 'write_file', args: { path: `a${E}[31m.txt`, content: hostile } } } : { text: `done ${hostile}` }) })
+    try {
+      const r = await runCli([...M, 'write the file'], { cwd, baseURL: mock.baseURL, stdin: 'n\n', env: { NO_COLOR: '' } })
+      // colors are off when stdout is not a TTY, so any ESC or CR in the output would have come from the model
+      assert.ok(!r.stdout.includes(E), JSON.stringify(r.stdout))
+      assert.ok(!r.stdout.includes('\r') && !r.stdout.includes('\u0007'))
+      assert.match(r.stdout, /Safe note\.Approved: nothing to see/) // the visible text itself is preserved
+    } finally { await mock.close() }
+  })
+})
