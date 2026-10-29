@@ -6,12 +6,16 @@ import {
   DEFAULT_SYSTEM,
   builtinTools,
   webTools,
+  memoryTools,
+  createFoundryEmbedder,
+  openLocalMemory,
+  recallBlock,
   createFoundry,
   findModel,
   foundryConfigFromEnv,
   runAgent,
 } from '@oqelira/core'
-import type { Approver, Message, ModelConfig, Risk } from '@oqelira/core'
+import type { ContextGateway, Approver, Message, ModelConfig, Risk } from '@oqelira/core'
 import { renderApproval } from './approval.js'
 import { loadEnvFiles } from './env.js'
 import { LineReader } from './lines.js'
@@ -120,6 +124,16 @@ async function main(): Promise<number> {
   }
 
   const makeProvider = createFoundry(config)
+  // Project memory is on only when an embedding deployment is configured (never hardcoded).
+  let memory: ContextGateway | undefined
+  const embeddingDeployment = process.env.OQELIRA_EMBEDDING_DEPLOYMENT?.trim()
+  if (embeddingDeployment) {
+    try {
+      memory = await openLocalMemory(cwd, createFoundryEmbedder(config)(embeddingDeployment))
+    } catch (e) {
+      process.stderr.write(`Project memory disabled: ${(e as Error).message}\n`)
+    }
+  }
   const system = DEFAULT_SYSTEM + readProjectRules(cwd)
   const autoAllow: Risk[] = ['read', ...(values.yes || values.yolo ? (['write'] as Risk[]) : []), ...(values.yolo ? (['exec', 'network'] as Risk[]) : [])]
 
@@ -156,7 +170,17 @@ async function main(): Promise<number> {
     }
   })
 
-  const tools = [...builtinTools, ...webTools()]
+  const tools = [...builtinTools, ...webTools(), ...(memory ? memoryTools(memory) : [])]
+
+  async function memoryContext(prompt: string): Promise<string> {
+    if (!memory) return ''
+    try {
+      return await recallBlock(memory, prompt, current?.signal)
+    } catch (e) {
+      out(`${dim(`Memory recall skipped: ${(e as Error).message}`)}\n`)
+      return ''
+    }
+  }
 
   async function runTurn(prompt: string, history: Message[]): Promise<{ ok: boolean; messages: Message[] }> {
     current = new AbortController()
@@ -166,7 +190,7 @@ async function main(): Promise<number> {
         prompt,
         tools,
         cwd,
-        system,
+        system: system + (await memoryContext(prompt)),
         history,
         maxSteps,
         permissions: { autoAllow, approve },

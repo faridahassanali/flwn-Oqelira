@@ -53,3 +53,9 @@ export interface ModelProvider {
   readonly id: string
   stream(req: ModelRequest): AsyncIterable<ModelEvent>
 }
+
+/** Turns text into vectors. Like ModelProvider, the rest of the code never sees the SDK behind it. */
+export interface EmbeddingProvider {
+  readonly id: string
+  embed(texts: string[], signal?: AbortSignal): Promise<number[][]>
+}
