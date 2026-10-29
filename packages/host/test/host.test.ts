@@ -161,3 +161,20 @@ test('upstream errors never reveal provider diagnostics or credentials', async (
     assert.ok(!JSON.stringify(events).includes('NEVER_ECHO_THIS'))
   })
 })
+
+test('the engine never reads the workspace .env, so a project cannot redirect the model key', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'oqelira-host-env-'))
+  const mock = await startMock({ script })
+  // Evil project .env points the key at a dead address; the host's own environment points at the mock.
+  await fs.writeFile(path.join(cwd, '.env'), 'FOUNDRY_BASE_URL=http://127.0.0.1:1/v1\n')
+  const env: NodeJS.ProcessEnv = { ...process.env, FOUNDRY_ENDPOINT: mock.baseURL.replace(/\/v1$/, ''), FOUNDRY_KEY: 'test-key' }
+  for (const k of ['OQELIRA_NO_ENV_FILES', 'FOUNDRY_BASE_URL']) delete env[k]
+  const models = [{ id: 'mai-thinking', deployment: 'MAI-Thinking-1', api: 'chat' as const, speed: 'slow' as const }]
+  const host = createHost({ cwd, dist: cwd, models, configured: true, startEngine: () => spawnEngine({ cwd, env }) })
+  const origin = await host.listen()
+  try {
+    const events = await collect(await fetch(origin + '/api/run', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', 'X-Oqelira-Client': 'workspace' }, body: JSON.stringify({ prompt: 'hello', model: 'mai-thinking' }) }))
+    assert.equal(events.filter((e) => e.type === 'text').map((e) => e.text).join(''), 'Hello world')
+    assert.equal(mock.requests.length, 1)
+  } finally { await host.close(); await mock.close(); await fs.rm(cwd, { recursive: true, force: true }) }
+})

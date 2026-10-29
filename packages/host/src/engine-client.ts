@@ -22,7 +22,9 @@ export function engineBin(): string {
 /** Starts `oqelira serve` for one workspace. Fail-closed: the engine is started without --yes/--yolo. */
 export function spawnEngine(opts: { cwd: string; env?: NodeJS.ProcessEnv; args?: string[] }): EngineClient {
   const child = spawn(process.execPath, [engineBin(), 'serve', '--cwd', opts.cwd, ...(opts.args ?? [])], {
-    env: opts.env ?? process.env,
+    // The host already resolved its environment. The engine must not also read the workspace's own .env,
+    // or a cloned project could redirect the Foundry key (FOUNDRY_BASE_URL beats FOUNDRY_ENDPOINT).
+    env: { ...(opts.env ?? process.env), OQELIRA_NO_ENV_FILES: '1' },
     stdio: ['pipe', 'pipe', 'inherit'],
   })
   const listeners = new Set<(message: EngineMessage) => void>()
