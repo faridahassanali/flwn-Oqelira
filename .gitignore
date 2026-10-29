@@ -14,3 +14,4 @@ work/
 .azure/
 outputs/*.private.md
 *.vsix
+deploy/azure/database-public.bicep
