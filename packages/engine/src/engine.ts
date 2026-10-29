@@ -15,9 +15,10 @@ import {
   runAgent,
   webTools,
 } from '@oqelira/core'
-import type { Approver, ContextGateway, Message, ModelConfig, Risk, Tool } from '@oqelira/core'
+import type { Approver, ContextGateway, MemoryEntry, Message, ModelConfig, Risk, Tool } from '@oqelira/core'
 import type { HostEvent } from '@oqelira/protocol'
 import { createCompactor } from './compaction.js'
+import { extractFacts, saveFacts } from './memorize.js'
 import { noStore, openSessionStore } from './store.js'
 import type { SessionInfo, SessionStore, Snapshot } from './store.js'
 
@@ -34,6 +35,8 @@ export interface EngineOptions {
   persistHistory?: boolean
   /** Request size, in characters, above which older turns are summarized. */
   contextChars?: number
+  /** At the end of a session, save durable facts to project memory (needs memory enabled). Default on. */
+  autoMemory?: boolean
   /** After hitting the step limit, keep going this many more times. */
   maxContinues?: number
 }
@@ -56,6 +59,10 @@ export interface Engine {
   describe(name: string, input: unknown): string
   history(sessionId?: string): Promise<Message[]>
   sessions(): SessionInfo[]
+  /** Mines the session's new messages for durable facts and saves them. Returns what was saved. */
+  endSession(sessionId?: string, io?: { signal?: AbortSignal; onEvent?(event: HostEvent): void }): Promise<MemoryEntry[]>
+  memories(limit?: number): Promise<MemoryEntry[]>
+  forgetMemory(id: string): Promise<boolean>
   clear(sessionId?: string): Promise<void>
   run(prompt: string, io: RunIO): Promise<{ ok: boolean; finishReason: string }>
 }
@@ -162,6 +169,26 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
       return stateOf(id).messages
     },
     sessions: () => store.list(),
+    memories: async (limit) => (memory ? memory.list(limit) : []),
+    forgetMemory: async (id) => (memory ? memory.forget(id) : false),
+    async endSession(id = DEFAULT_SESSION, io = {}) {
+      if (!memory || opts.autoMemory === false) return []
+      const st = stateOf(id)
+      const from = Math.min(store.getMemorized(id), st.messages.length)
+      const fresh = st.messages.slice(from)
+      if (fresh.length < 4) return [] // too short to have decided anything
+      try {
+        const facts = await extractFacts(makeProvider(model), fresh, io.signal)
+        const saved = await saveFacts(memory, facts, id, io.signal)
+        store.setMemorized(id, st.messages.length) // only after a successful extraction
+        if (saved.length) io.onEvent?.({ type: 'notice', message: `Saved ${saved.length} ${saved.length === 1 ? 'memory' : 'memories'} from this session:\n${saved.map((m) => `  - [${m.id.slice(0, 8)}] ${m.text}`).join('\n')}` })
+        return saved
+      } catch (e) {
+        if (io.signal?.aborted) throw e
+        io.onEvent?.({ type: 'notice', message: `Could not save session memory: ${(e as Error).message}` })
+        return []
+      }
+    },
     async clear(id = DEFAULT_SESSION) {
       states.delete(id)
       store.remove(id)

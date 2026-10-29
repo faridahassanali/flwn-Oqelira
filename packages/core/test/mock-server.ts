@@ -19,6 +19,14 @@ export async function startMock(opts: MockOptions) {
   const server = http.createServer(async (req, res) => {
     let raw = ''
     for await (const chunk of req) raw += chunk
+    if (req.method === 'POST' && req.url?.endsWith('/embeddings')) {
+      // Deterministic bag-of-words vectors: shared words => similar vectors.
+      const input: string[] = [].concat(JSON.parse(raw).input)
+      const vec = (t: string) => { const v = new Array(64).fill(0); for (const w of t.toLowerCase().match(/[a-z]+/g) ?? []) { let h = 0; for (const c of w) h = (h * 31 + c.charCodeAt(0)) % 64; v[h] += 1 } return v }
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ object: 'list', model: 'mock-embed', data: input.map((t, index) => ({ object: 'embedding', index, embedding: vec(t) })), usage: { prompt_tokens: 1, total_tokens: 1 } }))
+      return
+    }
     if (req.method !== 'POST' || !req.url?.endsWith('/chat/completions')) {
       res.writeHead(404).end()
       return

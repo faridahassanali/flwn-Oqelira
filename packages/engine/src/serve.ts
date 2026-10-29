@@ -16,6 +16,7 @@ export interface ServeOptions { input?: NodeJS.ReadableStream; output?: NodeJS.W
 export async function serve(engine: Engine, { input = process.stdin, output = process.stdout, version = '0.0.0', approvalTimeoutMs = APPROVAL_TIMEOUT_MS }: ServeOptions = {}): Promise<void> {
   const send = (message: EngineMessage) => { output.write(JSON.stringify(message) + '\n') }
   let run: ActiveRun | undefined
+  const touched = new Set<string>() // sessions with new work, mined for memory when we shut down
 
   const abort = () => {
     run?.controller.abort()
@@ -40,6 +41,23 @@ export async function serve(engine: Engine, { input = process.stdin, output = pr
         pending.resolve(req.allowed === true)
         return
       }
+      case 'end': {
+        if (run) { send({ type: 'error', message: 'Cannot end a session while a run is active' }); return }
+        const saved = await engine.endSession(req.sessionId, { onEvent: send, signal: AbortSignal.timeout(60_000) })
+        touched.delete(req.sessionId ?? DEFAULT_SESSION)
+        send({ type: 'ended', saved: saved.length })
+        return
+      }
+      case 'memory': {
+        if (req.action === 'forget') {
+          if (typeof req.id !== 'string') { send({ type: 'error', message: 'Memory id required' }); return }
+          const forgotten = await engine.forgetMemory(req.id)
+          send({ type: 'memory', entries: [], forgotten })
+          return
+        }
+        send({ type: 'memory', entries: (await engine.memories(50)).map(({ id, text, kind, createdAt }) => ({ id, text, kind, createdAt })) })
+        return
+      }
       case 'sessions':
         send({ type: 'sessions', sessions: engine.sessions() })
         return
@@ -57,6 +75,7 @@ export async function serve(engine: Engine, { input = process.stdin, output = pr
         try { if (req.model) engine.setModel(req.model) } catch (e) { send({ type: 'error', message: (e as Error).message }); return }
         const current: ActiveRun = { controller: new AbortController() }
         run = current
+        touched.add(req.sessionId ?? DEFAULT_SESSION)
         send({ type: 'started', runId: randomUUID(), sessionId: req.sessionId ?? 'default' })
         try {
           await engine.run(req.prompt.trim(), {
@@ -97,4 +116,6 @@ export async function serve(engine: Engine, { input = process.stdin, output = pr
   }
   abort() // stdin closed: the interface is gone, so stop any run and deny its pending approval
   await Promise.allSettled(inflight)
+  // Closing the app ends the chats: save what they decided (best effort, bounded).
+  for (const id of touched) await engine.endSession(id, { signal: AbortSignal.timeout(20_000) }).catch(() => {})
 }

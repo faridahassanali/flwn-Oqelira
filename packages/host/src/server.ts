@@ -109,7 +109,7 @@ export function createHost(opts: HostOptions) {
           case 'done': send(message); finish(); return
           // SDK errors may include upstream request headers or bodies; do not echo them.
           case 'error': send({ type: 'error', message: message.message === 'Run stopped' ? 'Run stopped' : 'The model run failed. Check host configuration and retry.' }); finish(); return
-          case 'ready': case 'cleared': case 'sessions': case 'history': return
+          case 'ready': case 'cleared': case 'sessions': case 'history': case 'ended': case 'memory': return
           default: send(message)
         }
       })

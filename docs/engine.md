@@ -47,6 +47,22 @@ truncated excerpts, so a run never dies on compaction. On resume the saved snaps
 protocol's `sessions` and `history` requests return the list and the full transcript for display.
 After the step limit the engine continues by itself up to `--max-continues` times (default 3).
 
+## Automatic project memory
+
+When a session ends (`/exit`, `/clear`, end of a one-shot, a protocol `end` request, or the interface closing
+the engine's stdin) the engine asks the model for up to five durable facts from the messages not yet mined
+(decisions and why, conventions, gotchas, unfinished work) and saves them to project memory as `kind: summary`.
+Safeguards, because saved text is injected into future prompts:
+
+- only user and assistant text is mined; tool results (file contents, web pages) never are;
+- facts that look like credentials or like instructions to an AI are dropped, near-duplicates of existing
+  memory are skipped, and everything saved is printed with an id (`/memory`, `/memory forget <id>`);
+- recalled memory is always presented to the model as untrusted data;
+- `--no-auto-memory` turns it off; it is also off whenever memory itself is off.
+
+The pattern filter is a backstop, not a guarantee. Sessions are marked as mined only after a successful
+extraction, so a failure retries next time.
+
 ## Phases
 
 1. **Done:** `createEngine` ([engine.ts](../packages/engine/src/engine.ts)), the terminal CLI on top of it,

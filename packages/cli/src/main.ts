@@ -21,6 +21,7 @@ Options:
       --max-steps <n>   stop after n model steps (default 25)
       --env-file <f>    extra .env file (only FOUNDRY_/OQELIRA_/FLWN_/DATA_ keys are read)
       --no-history      do not load or save the local interactive session history
+      --no-auto-memory  do not save facts to project memory when a session ends
       --list-models     show the available models
   -h, --help            show this help
 
@@ -31,7 +32,7 @@ In the session:  /model <id>   /clear   /help   /exit      Ctrl+C interrupts a r
 Project rules are read from OQELIRA.md (or AGENTS.md) in the project directory.
 `
 
-const SESSION_HELP = '/model <id>  switch model   /clear  forget saved conversation   /exit  quit   Ctrl+C  interrupt'
+const SESSION_HELP = '/model <id>  switch model   /memory  list saved project memory (/memory forget <id>)   /clear  forget saved conversation   /exit  quit   Ctrl+C  interrupt'
 
 function oneLine(text: string, max = 110): string {
   const first = text.split(/\r?\n/).find((l) => l.trim()) ?? ''
@@ -52,6 +53,7 @@ async function main(): Promise<number> {
         'env-file': { type: 'string' },
         'list-models': { type: 'boolean' },
         'no-history': { type: 'boolean' },
+        'no-auto-memory': { type: 'boolean' },
         'approval-timeout-ms': { type: 'string' },
         help: { type: 'boolean', short: 'h' },
       },
@@ -86,6 +88,7 @@ async function main(): Promise<number> {
       yolo: values.yolo,
       maxSteps,
       persistHistory: !values['no-history'],
+      autoMemory: !values['no-auto-memory'],
     })
   } catch (e) {
     process.stderr.write(`${(e as Error).message}\n`)
@@ -181,9 +184,24 @@ async function main(): Promise<number> {
     }
   }
 
+  /** End of a chat: save its durable facts to project memory (prints what was saved). */
+  async function saveSessionMemory(): Promise<void> {
+    if (!engine.memory) return
+    const abort = new AbortController()
+    current = abort
+    try {
+      await engine.endSession(undefined, { signal: abort.signal, onEvent: (e) => { if (e.type === 'notice') out(`${dim(e.message)}\n`) } })
+    } catch {
+      /* interrupted: nothing is marked as saved, so the next session retries */
+    } finally {
+      current = null
+    }
+  }
+
   // ---- one-shot
   if (positionals.length > 0) {
     const ok = await runTurn(positionals.join(' '))
+    await saveSessionMemory()
     lines.close()
     return ok ? 0 : 1
   }
@@ -202,7 +220,20 @@ async function main(): Promise<number> {
       out(`${dim(SESSION_HELP)}\n`)
       continue
     }
+    if (text === '/memory' || text.startsWith('/memory ')) {
+      const [, action, id] = text.split(/\s+/)
+      if (action === 'forget') {
+        out(`${dim(id && (await engine.forgetMemory(id)) ? 'forgotten' : 'no memory with that id')}\n`)
+      } else if (!engine.memory) {
+        out(`${dim('Project memory is off. Set OQELIRA_EMBEDDING_DEPLOYMENT to enable it.')}\n`)
+      } else {
+        const entries = await engine.memories(20)
+        out(entries.length ? entries.map((m) => `${dim(`[${m.id.slice(0, 8)}]`)} ${m.text}`).join('\n') + '\n' : `${dim('no saved memory yet')}\n`)
+      }
+      continue
+    }
     if (text === '/clear') {
+      await saveSessionMemory()
       await engine.clear()
       out(`${dim('conversation cleared')}\n`)
       continue
@@ -227,6 +258,7 @@ async function main(): Promise<number> {
     }
     await runTurn(text)
   }
+  await saveSessionMemory()
   lines.close()
   return 0
 }

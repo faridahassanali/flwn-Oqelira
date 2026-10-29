@@ -19,6 +19,9 @@ export interface SessionStore {
   append(id: string, messages: Message[], from: number, meta: { model: string; title?: string }): void
   saveSnapshot(id: string, summary: string, coversThrough: number): Snapshot
   remove(id: string): void
+  /** How many leading messages have already been mined for project memory. */
+  getMemorized(id: string): number
+  setMemorized(id: string, through: number): void
 }
 
 const secret = /((?:api[_-]?key|token|password|secret)\s*[:=]\s*["']?)[^\s"']+/gi
@@ -38,7 +41,7 @@ const titleOf = (messages: Message[]) => {
 }
 
 /** A store that remembers nothing: used when node:sqlite is unavailable or persistence is off. */
-export const noStore: SessionStore = { list: () => [], load: () => undefined, append() {}, saveSnapshot: (_i, summary, coversThrough) => ({ version: 0, summary, coversThrough, createdAt: new Date().toISOString() }), remove() {} }
+export const noStore: SessionStore = { list: () => [], load: () => undefined, append() {}, saveSnapshot: (_i, summary, coversThrough) => ({ version: 0, summary, coversThrough, createdAt: new Date().toISOString() }), remove() {}, getMemorized: () => 0, setMemorized() {} }
 
 export async function openSessionStore(cwd: string, stateRoot?: string): Promise<SessionStore> {
   const { DatabaseSync } = await import('node:sqlite')
@@ -60,6 +63,7 @@ export async function openSessionStore(cwd: string, stateRoot?: string): Promise
       id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
       version INTEGER NOT NULL, summary TEXT NOT NULL, covers_through INTEGER NOT NULL, created_at TEXT NOT NULL,
       content_hash TEXT NOT NULL, synced_at TEXT, UNIQUE(session_id, version));
+    CREATE TABLE IF NOT EXISTS memory_marks (session_id TEXT PRIMARY KEY, through INTEGER NOT NULL);
     PRAGMA foreign_keys = ON;`)
   const deviceRow = db.prepare("SELECT value FROM meta WHERE key = 'device_id'").get() as { value: string } | undefined
   const deviceId = deviceRow?.value ?? randomUUID()
@@ -103,6 +107,15 @@ export async function openSessionStore(cwd: string, stateRoot?: string): Promise
       }
       return snap
     },
-    remove(id) { db.prepare('DELETE FROM sessions WHERE id = ?').run(id) },
+    remove(id) {
+      db.prepare('DELETE FROM sessions WHERE id = ?').run(id)
+      db.prepare('DELETE FROM memory_marks WHERE session_id = ?').run(id)
+    },
+    getMemorized(id) {
+      return Number((db.prepare('SELECT through FROM memory_marks WHERE session_id = ?').get(id) as { through: number } | undefined)?.through ?? 0)
+    },
+    setMemorized(id, through) {
+      db.prepare('INSERT INTO memory_marks (session_id, through) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET through = excluded.through').run(id, through)
+    },
   }
 }

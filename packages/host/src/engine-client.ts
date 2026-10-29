@@ -63,6 +63,12 @@ export function spawnEngine(opts: { cwd: string; env?: NodeJS.ProcessEnv; args?:
     get closed() { return closed },
     send,
     onMessage(listener) { listeners.add(listener); return () => { listeners.delete(listener) } },
-    close() { closed = true; child.stdin!.end(); child.kill() },
+    // Closing stdin lets the engine save session memory and exit; kill it only if that takes too long.
+    close() {
+      closed = true
+      child.stdin!.end()
+      const timer = setTimeout(() => child.kill(), 25_000)
+      child.once('exit', () => clearTimeout(timer))
+    },
   }
 }

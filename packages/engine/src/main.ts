@@ -12,6 +12,7 @@ Options:
       --max-steps <n>         stop a run after n model steps (default 25)
       --env-file <f>          extra .env file
       --no-history            do not store sessions on disk
+      --no-auto-memory        do not save facts to project memory when a session ends
       --context-chars <n>     summarize older turns above this request size (default 80000)
       --max-continues <n>     auto-continue this many times after the step limit (default 3)
       --approval-timeout-ms   deny an unanswered approval after this long (default 120000)
@@ -31,6 +32,7 @@ async function main(): Promise<number> {
         'env-file': { type: 'string' },
         'approval-timeout-ms': { type: 'string' },
         'no-history': { type: 'boolean' },
+        'no-auto-memory': { type: 'boolean' },
         'context-chars': { type: 'string' },
         'max-continues': { type: 'string' },
         help: { type: 'boolean', short: 'h' },
@@ -60,6 +62,7 @@ async function main(): Promise<number> {
       yolo: values.yolo,
       maxSteps: positive('max-steps') ?? 25,
       persistHistory: !values['no-history'],
+      autoMemory: !values['no-auto-memory'],
       contextChars: positive('context-chars'),
       maxContinues: positive('max-continues'),
     })
