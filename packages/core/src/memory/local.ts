@@ -1,5 +1,6 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import type { EmbeddingProvider } from '../providers/types.js'
 import { MAX_MEMORY_CHARS } from './gateway.js'
@@ -17,24 +18,23 @@ export function cosine(a: ArrayLike<number>, b: ArrayLike<number>): number {
   return na && nb ? dot / Math.sqrt(na * nb) : 0
 }
 
+/** Per-user store for one project: ~/.oqelira/projects/<hash of the real project path>/. */
+export function memoryDir(cwd: string, stateRoot = path.join(os.homedir(), '.oqelira')): string {
+  const id = createHash('sha256').update(fs.realpathSync(cwd)).digest('hex').slice(0, 24)
+  return path.join(stateRoot, 'projects', id)
+}
+
 /**
- * Per-project SQLite file at <cwd>/.oqelira/memory.sqlite (git-ignored). node:sqlite is loaded lazily
- * so hosts without it (older Node) can still run, just without memory.
+ * Kept outside the repo on purpose: a cloned project could otherwise plant .oqelira, memory.sqlite or its
+ * -journal/-wal/-shm sidecars as symlinks and redirect writes. node:sqlite is loaded lazily so hosts
+ * without it (older Node) can still run, just without memory. `stateRoot` exists for tests only.
  */
-export async function openLocalMemory(cwd: string, embedder: EmbeddingProvider): Promise<ContextGateway> {
+export async function openLocalMemory(cwd: string, embedder: EmbeddingProvider, stateRoot?: string): Promise<ContextGateway> {
   const { DatabaseSync } = await import('node:sqlite')
-  // A cloned repo could ship .oqelira (or memory.sqlite) as a symlink to redirect where we read/write.
-  const dir = path.join(fs.realpathSync(cwd), '.oqelira')
+  const dir = memoryDir(cwd, stateRoot)
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
-  if (!fs.lstatSync(dir).isDirectory()) throw new Error('.oqelira must be a real directory, not a link')
-  const file = path.join(dir, 'memory.sqlite')
-  try {
-    if (!fs.lstatSync(file).isFile()) throw new Error('memory.sqlite must be a regular file, not a link')
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e
-    fs.closeSync(fs.openSync(file, 'wx', 0o600))
-  }
-  const db = new DatabaseSync(file)
+  const db = new DatabaseSync(path.join(dir, 'memory.sqlite'))
+  fs.chmodSync(path.join(dir, 'memory.sqlite'), 0o600)
   db.exec(`CREATE TABLE IF NOT EXISTS memory (
     id TEXT PRIMARY KEY, text TEXT NOT NULL, kind TEXT NOT NULL, source TEXT,
     created_at TEXT NOT NULL, model TEXT NOT NULL, dim INTEGER NOT NULL, embedding BLOB NOT NULL)`)
