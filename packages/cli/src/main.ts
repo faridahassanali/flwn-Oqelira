@@ -32,7 +32,7 @@ In the session:  /model <id>   /clear   /help   /exit      Ctrl+C interrupts a r
 Project rules are read from OQELIRA.md (or AGENTS.md) in the project directory.
 `
 
-const SESSION_HELP = '/model <id>  switch model   /memory  list saved project memory (/memory forget <id>)   /clear  forget saved conversation   /exit  quit   Ctrl+C  interrupt'
+const SESSION_HELP = '/model <id>  switch model   /memory  list project memory (/memory approve <id|all>, /memory forget <id>)   /clear  forget saved conversation   /exit  quit   Ctrl+C  interrupt'
 
 function oneLine(text: string, max = 110): string {
   const first = text.split(/\r?\n/).find((l) => l.trim()) ?? ''
@@ -190,7 +190,7 @@ async function main(): Promise<number> {
     const abort = new AbortController()
     current = abort
     try {
-      await engine.endSession(undefined, { signal: abort.signal, onEvent: (e) => { if (e.type === 'notice') out(`${dim(e.message)}\n`) } })
+      await engine.endSession(undefined, { signal: abort.signal, approve, onEvent: (e) => { if (e.type === 'notice') out(`${dim(e.message)}\n`) } })
     } catch {
       /* interrupted: nothing is marked as saved, so the next session retries */
     } finally {
@@ -208,6 +208,8 @@ async function main(): Promise<number> {
 
   // ---- interactive session
   out(`${bold('oqelira')} ${dim(`model ${engine.model.id} (${engine.model.api}) | ${cwd}`)}\n${dim(SESSION_HELP)}\n`)
+  const pending = engine.memory ? (await engine.memories(500)).filter((m) => m.status === 'pending').length : 0
+  if (pending) out(`${yellow(`${pending} proposed ${pending === 1 ? 'memory awaits' : 'memories await'} your review:`)} ${dim('/memory, then /memory approve <id|all>')}\n`)
   const restored = (await engine.history()).length
   if (restored) out(`${dim(`restored ${restored} local history messages`)}\n`)
   for (;;) {
@@ -224,11 +226,16 @@ async function main(): Promise<number> {
       const [, action, id] = text.split(/\s+/)
       if (action === 'forget') {
         out(`${dim(id && (await engine.forgetMemory(id)) ? 'forgotten' : 'no memory with that id')}\n`)
+      } else if (action === 'approve') {
+        const ids = id === 'all' ? (await engine.memories(500)).filter((m) => m.status === 'pending').map((m) => m.id) : id ? [id] : []
+        let n = 0
+        for (const one of ids) if (await engine.approveMemory(one)) n++
+        out(`${dim(n ? `approved ${n}` : 'nothing to approve (use /memory approve <id|all>)')}\n`)
       } else if (!engine.memory) {
         out(`${dim('Project memory is off. Set OQELIRA_EMBEDDING_DEPLOYMENT to enable it.')}\n`)
       } else {
         const entries = await engine.memories(20)
-        out(entries.length ? entries.map((m) => `${dim(`[${m.id.slice(0, 8)}]`)} ${m.text}`).join('\n') + '\n' : `${dim('no saved memory yet')}\n`)
+        out(entries.length ? entries.map((m) => `${dim(`[${m.id.slice(0, 8)}]`)}${m.status === 'pending' ? yellow(' (pending review)') : ''} ${m.text}`).join('\n') + '\n' : `${dim('no saved memory yet')}\n`)
       }
       continue
     }

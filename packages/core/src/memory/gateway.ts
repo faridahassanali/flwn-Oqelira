@@ -9,16 +9,21 @@ export interface MemoryEntry {
   kind: 'note' | 'summary'
   /** Chat or session that produced it, when known. */
   source?: string
+  /** `pending` entries were proposed automatically and are not recalled until the user approves them. */
+  status: 'active' | 'pending'
   createdAt: string
 }
 export interface MemoryHit extends MemoryEntry { score: number }
 
 export interface ContextGateway {
-  readonly version: 1
-  remember(text: string, opts?: { kind?: MemoryEntry['kind']; source?: string }): Promise<MemoryEntry>
+  readonly version: 2
+  remember(text: string, opts?: { kind?: MemoryEntry['kind']; source?: string; status?: MemoryEntry['status'] }): Promise<MemoryEntry>
   recall(query: string, opts?: { limit?: number; minScore?: number; signal?: AbortSignal }): Promise<MemoryHit[]>
+  /** Newest first, including pending entries. */
   list(limit?: number): Promise<MemoryEntry[]>
   forget(id: string): Promise<boolean>
+  /** Turns a pending entry into an active one. Accepts an id or a unique prefix. */
+  approve(id: string): Promise<boolean>
 }
 
 export const MAX_MEMORY_CHARS = 2000
@@ -30,7 +35,7 @@ export async function recallBlock(gateway: ContextGateway, prompt: string, signa
   let used = 0
   const lines: string[] = []
   for (const h of hits) {
-    const line = `- [${h.id.slice(0, 8)}] ${h.text.replace(/\s+/g, ' ')}`
+    const line = `- [${h.id.slice(0, 8)}]${h.kind === 'summary' ? ' (auto-saved)' : ''} ${h.text.replace(/\s+/g, ' ')}`
     if (used + line.length > BLOCK_CHARS) break
     used += line.length
     lines.push(line)

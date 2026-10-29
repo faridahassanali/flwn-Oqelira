@@ -54,5 +54,9 @@ test('saveFacts drops unacceptable facts and near-duplicates of existing memory'
     assert.deepEqual(saved.map((m) => m.text), ['The database is SQLite for local sessions'])
     assert.equal(saved[0]!.kind, 'summary'); assert.equal(saved[0]!.source, 'sess1')
     assert.equal((await gw.list()).length, 2)
+    // pending proposals are not recalled, but the same fact is still not proposed twice
+    const pending = await saveFacts(gw, ['The CI runs on GitHub Actions only'], 'sess2', 'pending')
+    assert.equal(pending[0]!.status, 'pending')
+    assert.deepEqual(await saveFacts(gw, ['the CI runs on github actions only'], 'sess3', 'pending'), [])
   } finally { await fs.rm(cwd, { recursive: true, force: true }); await fs.rm(`${cwd}-home`, { recursive: true, force: true }) }
 })

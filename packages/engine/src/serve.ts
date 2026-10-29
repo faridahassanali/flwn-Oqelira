@@ -18,6 +18,16 @@ export async function serve(engine: Engine, { input = process.stdin, output = pr
   let run: ActiveRun | undefined
   const touched = new Set<string>() // sessions with new work, mined for memory when we shut down
 
+  /** Approval requests go to the interface and wait; unanswered, cancelled or timed out means denied. */
+  const approverFor = (current: ActiveRun) => (request: Parameters<Parameters<Engine['run']>[1]['approve']>[0]) =>
+    new Promise<boolean>((resolve) => {
+      if (current.controller.signal.aborted) { resolve(false); return }
+      const id = randomUUID()
+      const timer = setTimeout(() => { if (current.pending?.id === id) { current.pending = undefined; resolve(false) } }, approvalTimeoutMs)
+      current.pending = { id, resolve: (allowed) => { clearTimeout(timer); resolve(allowed) } }
+      send({ type: 'approval', approval: { ...request, id } })
+    })
+
   const abort = () => {
     run?.controller.abort()
     run?.pending?.resolve(false)
@@ -43,9 +53,16 @@ export async function serve(engine: Engine, { input = process.stdin, output = pr
       }
       case 'end': {
         if (run) { send({ type: 'error', message: 'Cannot end a session while a run is active' }); return }
-        const saved = await engine.endSession(req.sessionId, { onEvent: send, signal: AbortSignal.timeout(60_000) })
-        touched.delete(req.sessionId ?? DEFAULT_SESSION)
-        send({ type: 'ended', saved: saved.length })
+        // The interface is present, so it is asked to approve what gets saved (cancel/stdin close deny it).
+        const current: ActiveRun = { controller: new AbortController() }
+        run = current
+        try {
+          const saved = await engine.endSession(req.sessionId, { onEvent: send, signal: current.controller.signal, approve: approverFor(current) })
+          touched.delete(req.sessionId ?? DEFAULT_SESSION)
+          send({ type: 'ended', saved: saved.length })
+        } finally {
+          run = undefined
+        }
         return
       }
       case 'memory': {
@@ -55,7 +72,15 @@ export async function serve(engine: Engine, { input = process.stdin, output = pr
           send({ type: 'memory', entries: [], forgotten })
           return
         }
-        send({ type: 'memory', entries: (await engine.memories(50)).map(({ id, text, kind, createdAt }) => ({ id, text, kind, createdAt })) })
+        if (req.action === 'approve') {
+          if (typeof req.id !== 'string') { send({ type: 'error', message: 'Memory id required' }); return }
+          const ids = req.id === 'all' ? (await engine.memories(500)).filter((m) => m.status === 'pending').map((m) => m.id) : [req.id]
+          let approved = 0
+          for (const id of ids) if (await engine.approveMemory(id)) approved++
+          send({ type: 'memory', entries: [], approved })
+          return
+        }
+        send({ type: 'memory', entries: (await engine.memories(50)).map(({ id, text, kind, status, createdAt }) => ({ id, text, kind, status, createdAt })) })
         return
       }
       case 'sessions':
@@ -82,13 +107,7 @@ export async function serve(engine: Engine, { input = process.stdin, output = pr
             sessionId: req.sessionId,
             signal: current.controller.signal,
             onEvent: send,
-            approve: (request) => new Promise<boolean>((resolve) => {
-              if (current.controller.signal.aborted) { resolve(false); return }
-              const id = randomUUID()
-              const timer = setTimeout(() => { if (current.pending?.id === id) { current.pending = undefined; resolve(false) } }, approvalTimeoutMs)
-              current.pending = { id, resolve: (allowed) => { clearTimeout(timer); resolve(allowed) } }
-              send({ type: 'approval', approval: { ...request, id } })
-            }),
+            approve: approverFor(current),
           })
         } finally {
           run = undefined

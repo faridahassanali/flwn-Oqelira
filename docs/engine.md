@@ -52,7 +52,12 @@ After the step limit the engine continues by itself up to `--max-continues` time
 When a session ends (`/exit`, `/clear`, end of a one-shot, a protocol `end` request, or the interface closing
 the engine's stdin) the engine asks the model for up to five durable facts from the messages not yet mined
 (decisions and why, conventions, gotchas, unfinished work) and saves them to project memory as `kind: summary`.
-Safeguards, because saved text is injected into future prompts:
+Saving is gated like the `save_memory` tool, because saved text is injected into future prompts and model
+text can relay injected content: the facts are shown and the user approves them (a `write` approval, skipped
+only when writes are auto-allowed with `--yes`/`--yolo`). When nobody can be asked (the interface is closing the
+engine) the facts are stored as `pending`: listed by `/memory`, never recalled until `/memory approve <id|all>`.
+Declining stores nothing and is not asked again for the same messages. Recalled auto-saved facts are labeled
+`(auto-saved)` in the prompt. Further safeguards:
 
 - only user and assistant text is mined; tool results (file contents, web pages) never are;
 - facts that look like credentials or like instructions to an AI are dropped, near-duplicates of existing

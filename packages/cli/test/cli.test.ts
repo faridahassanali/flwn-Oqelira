@@ -260,3 +260,21 @@ test('API error is reported cleanly (exit 1), not as a stack trace', async () =>
     assert.doesNotMatch(r.stderr, /at .*\.ts/)
   })
 })
+
+test('end of session shows the facts to be remembered and saves them only when approved', async () => {
+  const isExtractor = (b: any) => b.messages.find((m: any) => m.role === 'system')?.content.includes('extract durable project knowledge')
+  for (const [answer, saved] of [['y', true], ['', false]] as const) {
+    await workspace(async (cwd) => {
+      const mock = await startMock({ script: (body) => ({ text: isExtractor(body) ? '["The project deploys from the release branch."]' : 'noted' }) })
+      try {
+        const env = { OQELIRA_EMBEDDING_DEPLOYMENT: 'embed-test' }
+        const r = await runCli(M, { cwd, baseURL: mock.baseURL, env, stdin: `we deploy from release\nyes the release branch\n/exit\n${answer ? answer + '\n' : ''}` })
+        assert.match(r.stdout, /\? save 1 fact from this session to project memory/)
+        assert.match(r.stdout, /\+ The project deploys from the release branch\./) // the exact text is previewed
+        assert.equal(/Saved 1 memory/.test(r.stdout), saved, r.stdout)
+        const list = await runCli(M, { cwd, baseURL: mock.baseURL, env, stdin: '/memory\n/exit\n' })
+        assert.equal(/deploys from the release branch/.test(list.stdout), saved, list.stdout)
+      } finally { await mock.close() }
+    })
+  }
+})

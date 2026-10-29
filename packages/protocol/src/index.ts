@@ -40,7 +40,7 @@ export type EngineRequest =
   | { type: 'clear'; sessionId?: string }
   | { type: 'sessions' }
   | { type: 'end'; sessionId?: string }
-  | { type: 'memory'; action: 'list' | 'forget'; id?: string }
+  | { type: 'memory'; action: 'list' | 'forget' | 'approve'; id?: string }
   | { type: 'history'; sessionId?: string }
 export type EngineMessage =
   | { type: 'ready'; protocol: number; version: string; cwd: string; model: string; models: { id: string; deployment: string }[]; memory: boolean; webSearch: boolean }
@@ -48,5 +48,5 @@ export type EngineMessage =
   | { type: 'sessions'; sessions: { id: string; title: string; model: string; createdAt: string; updatedAt: string; messages: number }[] }
   | { type: 'history'; sessionId: string; messages: unknown[] }
   | { type: 'ended'; saved: number }
-  | { type: 'memory'; entries: { id: string; text: string; kind: string; createdAt: string }[]; forgotten?: boolean }
+  | { type: 'memory'; entries: { id: string; text: string; kind: string; status: string; createdAt: string }[]; forgotten?: boolean; approved?: number }
   | HostEvent

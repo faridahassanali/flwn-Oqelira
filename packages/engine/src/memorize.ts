@@ -49,14 +49,24 @@ export async function extractFacts(provider: ModelProvider, messages: Message[],
   return parseFacts(text)
 }
 
-/** Saves new facts, skipping near-duplicates of what is already remembered. Returns what was saved. */
-export async function saveFacts(gateway: ContextGateway, facts: string[], source: string, signal?: AbortSignal): Promise<MemoryEntry[]> {
-  const saved: MemoryEntry[] = []
+const norm = (t: string) => t.toLowerCase().replace(/\s+/g, ' ').trim()
+
+/** Facts worth proposing: acceptable, and not a duplicate (exact or near) of anything already remembered or pending. */
+export async function selectFacts(gateway: ContextGateway, facts: string[], signal?: AbortSignal): Promise<string[]> {
+  const known = new Set((await gateway.list(500)).map((m) => norm(m.text)))
+  const out: string[] = []
   for (const fact of facts) {
-    if (!acceptable(fact)) continue
+    if (!acceptable(fact) || known.has(norm(fact)) || out.some((f) => norm(f) === norm(fact))) continue
     const [nearest] = await gateway.recall(fact, { limit: 1, signal })
     if (nearest && nearest.score >= 0.9) continue
-    saved.push(await gateway.remember(fact, { kind: 'summary', source }))
+    out.push(fact)
   }
+  return out
+}
+
+/** Saves facts with the given status; `pending` ones are not recalled until the user approves them. */
+export async function saveFacts(gateway: ContextGateway, facts: string[], source: string, status: MemoryEntry['status'] = 'active', signal?: AbortSignal): Promise<MemoryEntry[]> {
+  const saved: MemoryEntry[] = []
+  for (const fact of await selectFacts(gateway, facts, signal)) saved.push(await gateway.remember(fact, { kind: 'summary', source, status }))
   return saved
 }

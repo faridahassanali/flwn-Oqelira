@@ -18,7 +18,7 @@ import {
 import type { Approver, ContextGateway, MemoryEntry, Message, ModelConfig, Risk, Tool } from '@oqelira/core'
 import type { HostEvent } from '@oqelira/protocol'
 import { createCompactor } from './compaction.js'
-import { extractFacts, saveFacts } from './memorize.js'
+import { extractFacts, saveFacts, selectFacts } from './memorize.js'
 import { noStore, openSessionStore } from './store.js'
 import type { SessionInfo, SessionStore, Snapshot } from './store.js'
 
@@ -60,9 +60,10 @@ export interface Engine {
   history(sessionId?: string): Promise<Message[]>
   sessions(): SessionInfo[]
   /** Mines the session's new messages for durable facts and saves them. Returns what was saved. */
-  endSession(sessionId?: string, io?: { signal?: AbortSignal; onEvent?(event: HostEvent): void }): Promise<MemoryEntry[]>
+  endSession(sessionId?: string, io?: { signal?: AbortSignal; onEvent?(event: HostEvent): void; approve?: Approver }): Promise<MemoryEntry[]>
   memories(limit?: number): Promise<MemoryEntry[]>
   forgetMemory(id: string): Promise<boolean>
+  approveMemory(id: string): Promise<boolean>
   clear(sessionId?: string): Promise<void>
   run(prompt: string, io: RunIO): Promise<{ ok: boolean; finishReason: string }>
 }
@@ -171,6 +172,7 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
     sessions: () => store.list(),
     memories: async (limit) => (memory ? memory.list(limit) : []),
     forgetMemory: async (id) => (memory ? memory.forget(id) : false),
+    approveMemory: async (id) => (memory ? memory.approve(id) : false),
     async endSession(id = DEFAULT_SESSION, io = {}) {
       if (!memory || opts.autoMemory === false) return []
       const st = stateOf(id)
@@ -178,10 +180,21 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
       const fresh = st.messages.slice(from)
       if (fresh.length < 4) return [] // too short to have decided anything
       try {
-        const facts = await extractFacts(makeProvider(model), fresh, io.signal)
-        const saved = await saveFacts(memory, facts, id, io.signal)
+        const candidates = await selectFacts(memory, await extractFacts(makeProvider(model), fresh, io.signal), io.signal)
+        // Saved text is injected into future prompts, so saving is gated like save_memory: asked unless writes
+        // are auto-allowed. Without anyone to ask (shutdown), facts are kept as `pending` and never recalled.
+        let status: MemoryEntry['status'] | undefined = candidates.length ? 'pending' : undefined
+        if (candidates.length && autoAllow.includes('write')) status = 'active'
+        else if (candidates.length && io.approve) {
+          const allowed = await io.approve({ tool: 'save_memory', risk: 'write', summary: `save ${candidates.length} ${candidates.length === 1 ? 'fact' : 'facts'} from this session to project memory`, input: { facts: candidates } })
+          status = allowed ? 'active' : undefined // declined: nothing is stored, and we do not ask again for these messages
+        }
+        const saved = status ? await saveFacts(memory, candidates, id, status, io.signal) : []
         store.setMemorized(id, st.messages.length) // only after a successful extraction
-        if (saved.length) io.onEvent?.({ type: 'notice', message: `Saved ${saved.length} ${saved.length === 1 ? 'memory' : 'memories'} from this session:\n${saved.map((m) => `  - [${m.id.slice(0, 8)}] ${m.text}`).join('\n')}` })
+        if (saved.length) {
+          const list = saved.map((m) => `  - [${m.id.slice(0, 8)}] ${m.text}`).join('\n')
+          io.onEvent?.({ type: 'notice', message: status === 'pending' ? `Proposed ${saved.length} ${saved.length === 1 ? 'memory' : 'memories'} for review (not used until approved; /memory approve <id|all>):\n${list}` : `Saved ${saved.length} ${saved.length === 1 ? 'memory' : 'memories'} from this session:\n${list}` })
+        }
         return saved
       } catch (e) {
         if (io.signal?.aborted) throw e

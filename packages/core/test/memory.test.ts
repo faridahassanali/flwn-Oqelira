@@ -68,3 +68,38 @@ test('memory lives in the per-user state dir, not in the project, even if the pr
     assert.notEqual(memoryDir(root, state), memoryDir(elsewhere, state))
   } finally { for (const d of [root, state, elsewhere]) await fs.rm(d, { recursive: true, force: true }) }
 })
+
+test('pending memories are listed but never recalled until approved; approve and forget take unique prefixes only', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'oq-mem-pending-'))
+  try {
+    const gw = await openLocalMemory(root, fake(), `${root}-state`)
+    const p = await gw.remember('deploys only happen on fridays', { kind: 'summary', status: 'pending' })
+    assert.equal(p.status, 'pending')
+    assert.equal((await gw.recall('when are deploys fridays')).length, 0) // not used while pending
+    assert.equal((await gw.list()).find((e) => e.id === p.id)?.status, 'pending')
+    assert.equal(await gw.approve('%%%%%%%%'), false)
+    assert.equal(await gw.approve(p.id.slice(0, 8)), true)
+    assert.equal(await gw.approve(p.id), false) // already active
+    assert.equal((await gw.recall('when are deploys fridays'))[0]?.id, p.id)
+    assert.match(await recallBlock(gw, 'deploys fridays'), /\(auto-saved\)/) // auto-saved memories are labeled for the model
+    assert.equal((await gw.remember('a deliberate note')).status, 'active')
+  } finally { await fs.rm(root, { recursive: true, force: true }); await fs.rm(`${root}-state`, { recursive: true, force: true }) }
+})
+
+test('a memory database created before the status column opens, and its rows stay active', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'oq-mem-migrate-'))
+  const state = `${root}-state`
+  try {
+    const gw = await openLocalMemory(root, fake(), state)
+    await gw.remember('old note about postgres')
+    const { DatabaseSync } = await import('node:sqlite')
+    const { memoryDir } = await import('../src/memory/local.js')
+    const db = new DatabaseSync(path.join(memoryDir(root, state), 'memory.sqlite'))
+    db.exec('ALTER TABLE memory DROP COLUMN status') // simulate the old schema
+    db.close()
+    const reopened = await openLocalMemory(root, fake(), state)
+    const [entry] = await reopened.list()
+    assert.equal(entry!.status, 'active')
+    assert.equal((await reopened.recall('postgres')).length, 1)
+  } finally { await fs.rm(root, { recursive: true, force: true }); await fs.rm(state, { recursive: true, force: true }) }
+})
