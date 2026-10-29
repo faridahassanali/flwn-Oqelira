@@ -26,8 +26,9 @@ environment, never in a message. Approvals fail closed: unanswered, cancelled, o
 
 1. **Done:** `createEngine` ([engine.ts](../packages/cli/src/engine.ts)), the terminal CLI on top of it,
    and `oqelira serve` ([serve.ts](../packages/cli/src/serve.ts)) with tests.
-2. **Host:** replace the in-process `runAgent` in `packages/host` with a spawned `oqelira serve`
-   bridge (HTTP/NDJSON for the browser stays; the agent code goes).
+2. **Done - Host:** `packages/host` spawns `oqelira serve` ([engine-client.ts](../packages/host/src/engine-client.ts))
+   and bridges it to the browser. The browser API is unchanged; the host keeps only HTTP security,
+   session ids and approval bookkeeping, and masks engine errors. One engine, one active run.
 3. **VS Code:** spawn the engine; keep native diff review and SecretStorage, pass the key via env.
 4. **Packaging:** the CLI is a dependency of the host and the extension (bundled in the VSIX).
    Decide how the extension finds a Node runtime with `node:sqlite` (memory degrades without it).

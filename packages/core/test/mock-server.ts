@@ -5,7 +5,7 @@
  */
 import http from 'node:http'
 
-export type Reply = { text: string } | { toolCall: { name: string; args: unknown } }
+export type Reply = { text: string } | { toolCall: { name: string; args: unknown } } | { fail: string }
 
 export interface MockOptions {
   /** Decide the reply for each request. `n` is the 0-based request count. */
@@ -42,6 +42,11 @@ export async function startMock(opts: MockOptions) {
     }
 
     const reply = opts.script(body, requests.length - 1)
+    if ('fail' in reply) {
+      res.writeHead(500, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ error: { message: reply.fail } }))
+      return
+    }
     const base = { id: 'chatcmpl-mock', object: 'chat.completion.chunk', created: 0, model: body.model }
     const chunks: unknown[] = []
     if ('text' in reply) {

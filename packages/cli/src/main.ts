@@ -53,6 +53,7 @@ async function main(): Promise<number> {
         'env-file': { type: 'string' },
         'list-models': { type: 'boolean' },
         'no-history': { type: 'boolean' },
+        'approval-timeout-ms': { type: 'string' },
         help: { type: 'boolean', short: 'h' },
       },
     })
@@ -92,7 +93,12 @@ async function main(): Promise<number> {
     return 2
   }
   if (serving) {
-    await serve(engine)
+    const approvalTimeoutMs = values['approval-timeout-ms'] ? Number(values['approval-timeout-ms']) : undefined
+    if (approvalTimeoutMs !== undefined && (!Number.isInteger(approvalTimeoutMs) || approvalTimeoutMs < 1)) {
+      process.stderr.write('--approval-timeout-ms must be a positive integer\n')
+      return 2
+    }
+    await serve(engine, { approvalTimeoutMs })
     return 0
   }
   const { cwd } = engine

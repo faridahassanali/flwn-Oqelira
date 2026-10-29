@@ -11,7 +11,8 @@ interface ActiveRun { controller: AbortController; pending?: { id: string; resol
  * Headless engine: NDJSON requests on stdin, NDJSON messages on stdout (stdout carries protocol only;
  * diagnostics go to stderr). Fail-closed: an approval nobody answers is denied.
  */
-export async function serve(engine: Engine, input = process.stdin, output = process.stdout, version = '0.0.0'): Promise<void> {
+export interface ServeOptions { input?: NodeJS.ReadableStream; output?: NodeJS.WritableStream; version?: string; approvalTimeoutMs?: number }
+export async function serve(engine: Engine, { input = process.stdin, output = process.stdout, version = '0.0.0', approvalTimeoutMs = APPROVAL_TIMEOUT_MS }: ServeOptions = {}): Promise<void> {
   const send = (message: EngineMessage) => { output.write(JSON.stringify(message) + '\n') }
   let run: ActiveRun | undefined
 
@@ -58,7 +59,7 @@ export async function serve(engine: Engine, input = process.stdin, output = proc
             approve: (request) => new Promise<boolean>((resolve) => {
               if (current.controller.signal.aborted) { resolve(false); return }
               const id = randomUUID()
-              const timer = setTimeout(() => { if (current.pending?.id === id) { current.pending = undefined; resolve(false) } }, APPROVAL_TIMEOUT_MS)
+              const timer = setTimeout(() => { if (current.pending?.id === id) { current.pending = undefined; resolve(false) } }, approvalTimeoutMs)
               current.pending = { id, resolve: (allowed) => { clearTimeout(timer); resolve(allowed) } }
               send({ type: 'approval', approval: { ...request, id } })
             }),

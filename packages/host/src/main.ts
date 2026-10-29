@@ -1,6 +1,7 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createFoundry, foundryConfigFromEnv, modelsFromEnv, loadEnvFiles } from '@oqelira/core'
+import { foundryConfigFromEnv, modelsFromEnv, loadEnvFiles } from '@oqelira/core'
+import { spawnEngine } from './engine-client.js'
 import { createHost } from './server.js'
 
 const root = fileURLToPath(new URL('../../../', import.meta.url))
@@ -9,10 +10,7 @@ const cwd = path.resolve(process.env.OQELIRA_WORKSPACE ?? root)
 let config: ReturnType<typeof foundryConfigFromEnv> | undefined
 try { config = foundryConfigFromEnv() } catch { /* UI shows setup guidance */ }
 const models = modelsFromEnv()
-const host = createHost({ cwd, dist: path.join(root, 'packages/web/dist'), models, configured: Boolean(config), provider: model => {
-  if (!config) throw new Error('Foundry is not configured')
-  return createFoundry(config)(model)
-} })
+const host = createHost({ cwd, dist: path.join(root, 'packages/web/dist'), models, configured: Boolean(config), startEngine: () => spawnEngine({ cwd }) })
 const port = Number(process.env.OQELIRA_PORT ?? 4317)
 if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid OQELIRA_PORT')
 const origin = await host.listen(port)
