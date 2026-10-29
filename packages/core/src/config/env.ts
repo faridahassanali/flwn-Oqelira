@@ -43,7 +43,10 @@ export function loadEnvFiles(opts: { explicit?: string; cwd: string }): string[]
       continue
     }
     used.push(file)
+    // A cloned project's own .env must not choose which Tavily account receives your searches.
+    const projectFile = file !== opts.explicit && file === path.join(opts.cwd, '.env')
     for (const [k, v] of Object.entries(parseEnv(text))) {
+      if (projectFile && k === 'TAVILY_API_KEY') continue
       if (ALLOWED.test(k) && process.env[k] === undefined) process.env[k] = v
     }
   }

@@ -121,7 +121,7 @@ async function main(): Promise<number> {
 
   const makeProvider = createFoundry(config)
   const system = DEFAULT_SYSTEM + readProjectRules(cwd)
-  const autoAllow: Risk[] = ['read', ...(values.yes || values.yolo ? (['write'] as Risk[]) : []), ...(values.yolo ? (['exec'] as Risk[]) : [])]
+  const autoAllow: Risk[] = ['read', ...(values.yes || values.yolo ? (['write'] as Risk[]) : []), ...(values.yolo ? (['exec', 'network'] as Risk[]) : [])]
 
   const lines = new LineReader()
   const alwaysAllow = new Set<Risk>()

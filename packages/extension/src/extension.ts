@@ -29,7 +29,7 @@ export function activate(context:vscode.ExtensionContext) {
       previews.set(left.toString(),before.content??'');previews.set(right.toString(),input.content??'')
       await vscode.commands.executeCommand('vscode.diff',left,right,`Oqelira: ${input.path}`,{preview:true})
     }
-    const answer=await vscode.window.showWarningMessage(request.summary,{modal:true,detail:(request.risk==='exec'?'This local shell command can access your computer.\n\n':'Review the proposed change.\n\n')+detail},'Allow once','Deny')
+    const answer=await vscode.window.showWarningMessage(request.summary,{modal:true,detail:(request.risk==='network'?'This sends the query to an external service.\n\n':request.risk==='exec'?'This local shell command can access your computer.\n\n':'Review the proposed change.\n\n')+detail},'Allow once','Deny')
     return !signal.aborted&&answer==='Allow once'
   }
   context.subscriptions.push(output,{dispose:()=>active?.abort()})

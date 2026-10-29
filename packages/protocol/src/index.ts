@@ -10,7 +10,7 @@ export interface HostConfig {
 export interface Approval {
   id: string
   tool: string
-  risk: 'read' | 'write' | 'exec'
+  risk: 'read' | 'write' | 'exec' | 'network'
   summary: string
   input: unknown
 }

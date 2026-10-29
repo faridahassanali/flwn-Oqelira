@@ -39,3 +39,23 @@ test('web_search calls Tavily with bearer key, formats results, and hides failur
     server.close()
   }
 })
+
+test('web_search has its own risk class and TAVILY_API_KEY is not read from the project .env', async () => {
+  assert.equal(webSearch.risk, 'network')
+  const fs = await import('node:fs'), os = await import('node:os'), path = await import('node:path')
+  const { loadEnvFiles } = await import('../src/config/env.js')
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oq-env-'))
+  const saved = process.env.TAVILY_API_KEY, savedNo = process.env.OQELIRA_NO_ENV_FILES
+  delete process.env.TAVILY_API_KEY; delete process.env.OQELIRA_NO_ENV_FILES
+  try {
+    fs.writeFileSync(path.join(dir, '.env'), 'TAVILY_API_KEY=project\n')
+    loadEnvFiles({ cwd: dir })
+    assert.equal(process.env.TAVILY_API_KEY, undefined)
+    loadEnvFiles({ cwd: '/nonexistent', explicit: path.join(dir, '.env') })
+    assert.equal(process.env.TAVILY_API_KEY, 'project')
+  } finally {
+    if (saved === undefined) delete process.env.TAVILY_API_KEY; else process.env.TAVILY_API_KEY = saved
+    if (savedNo !== undefined) process.env.OQELIRA_NO_ENV_FILES = savedNo
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})

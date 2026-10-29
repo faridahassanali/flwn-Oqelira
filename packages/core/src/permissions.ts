@@ -1,4 +1,4 @@
-export type Risk = 'read' | 'write' | 'exec'
+export type Risk = 'read' | 'write' | 'exec' | 'network'
 
 export interface ApprovalRequest {
   tool: string

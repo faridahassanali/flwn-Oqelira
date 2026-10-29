@@ -9,8 +9,8 @@ export const webSearch: Tool = {
     description: 'Search the web (Tavily) for current docs, library versions, error messages or news. Returns a short answer and ranked sources. Do not put secrets or private code in the query.',
     parameters: { type: 'object', properties: { query: { type: 'string' }, max_results: { type: 'integer', minimum: 1, maximum: 10, description: 'Default 5.' } }, required: ['query'] },
   },
-  // The query leaves the machine, so it always asks; --yes (writes only) does not cover it.
-  risk: 'exec',
+  // The query leaves the machine, so it always asks. Own class so approving it never covers run_command.
+  risk: 'network',
   describe: (i) => `web search: ${str(i, 'query')}`,
   async run(input, ctx) {
     const query = str(input, 'query').trim()
