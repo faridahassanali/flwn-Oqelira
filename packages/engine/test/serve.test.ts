@@ -9,12 +9,12 @@ import readline from 'node:readline'
 import { startMock } from '../../core/test/mock-server.js'
 import type { Reply } from '../../core/test/mock-server.js'
 
-const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'oqelira.mjs')
+const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'oqelira-engine.mjs')
 
-/** Starts `oqelira serve` and gives a tiny NDJSON client over its stdio. */
+/** Starts `oqelira-engine` and gives a tiny NDJSON client over its stdio. */
 async function engine(cwd: string, baseURL: string, extra: string[] = []) {
   const env: NodeJS.ProcessEnv = { ...process.env, OQELIRA_NO_ENV_FILES: '1', FOUNDRY_BASE_URL: baseURL, FOUNDRY_KEY: 'test-key' }
-  const child = spawn(process.execPath, [BIN, 'serve', '--cwd', cwd, '-m', 'mai-thinking', ...extra], { env })
+  const child = spawn(process.execPath, [BIN, '--cwd', cwd, '-m', 'mai-thinking', ...extra], { env })
   const messages: any[] = []
   const waiters: Array<() => void> = []
   readline.createInterface({ input: child.stdout }).on('line', (line) => {

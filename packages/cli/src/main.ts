@@ -2,10 +2,9 @@ import { parseArgs } from 'node:util'
 import { DEFAULT_MODELS } from '@oqelira/core'
 import type { Approver, Risk } from '@oqelira/core'
 import { renderApproval } from './approval.js'
-import { createEngine } from './engine.js'
-import type { Engine } from './engine.js'
+import { createEngine, serve } from '@oqelira/engine'
+import type { Engine } from '@oqelira/engine'
 import { LineReader } from './lines.js'
-import { serve } from './serve.js'
 import { bold, cyan, dim, green, red, yellow } from './ui.js'
 
 const USAGE = `oqelira - AI coding agent by Flwn

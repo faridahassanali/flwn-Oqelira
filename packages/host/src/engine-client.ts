@@ -14,14 +14,14 @@ export interface EngineClient {
   close(): void
 }
 
-/** Path of the CLI entry point. The host depends on @oqelira/cli, so installing the host installs the engine. */
+/** Path of the headless engine. The host depends on @oqelira/engine only, never on the terminal CLI. */
 export function engineBin(): string {
-  return path.join(path.dirname(createRequire(import.meta.url).resolve('@oqelira/cli/package.json')), 'bin', 'oqelira.mjs')
+  return path.join(path.dirname(createRequire(import.meta.url).resolve('@oqelira/engine/package.json')), 'bin', 'oqelira-engine.mjs')
 }
 
-/** Starts `oqelira serve` for one workspace. Fail-closed: the engine is started without --yes/--yolo. */
+/** Starts `oqelira-engine` for one workspace. Fail-closed: the engine is started without --yes/--yolo. */
 export function spawnEngine(opts: { cwd: string; env?: NodeJS.ProcessEnv; args?: string[] }): EngineClient {
-  const child = spawn(process.execPath, [engineBin(), 'serve', '--cwd', opts.cwd, ...(opts.args ?? [])], {
+  const child = spawn(process.execPath, [engineBin(), '--cwd', opts.cwd, ...(opts.args ?? [])], {
     // The host already resolved its environment. The engine must not also read the workspace's own .env,
     // or a cloned project could redirect the Foundry key (FOUNDRY_BASE_URL beats FOUNDRY_ENDPOINT).
     env: { ...(opts.env ?? process.env), OQELIRA_NO_ENV_FILES: '1' },
