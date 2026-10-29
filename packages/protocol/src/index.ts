@@ -38,7 +38,11 @@ export type EngineRequest =
   | { type: 'approval'; approvalId: string; allowed: boolean }
   | { type: 'cancel' }
   | { type: 'clear'; sessionId?: string }
+  | { type: 'sessions' }
+  | { type: 'history'; sessionId?: string }
 export type EngineMessage =
   | { type: 'ready'; protocol: number; version: string; cwd: string; model: string; models: { id: string; deployment: string }[]; memory: boolean; webSearch: boolean }
   | { type: 'cleared' }
+  | { type: 'sessions'; sessions: { id: string; title: string; model: string; createdAt: string; updatedAt: string; messages: number }[] }
+  | { type: 'history'; sessionId: string; messages: unknown[] }
   | HostEvent

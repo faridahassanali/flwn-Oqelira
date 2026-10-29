@@ -26,7 +26,7 @@ async function fixture(fn: (f: { cwd: string; origin: string; requests: any[]; p
   await fs.writeFile(path.join(cwd, 'hello.txt'), 'HELLO')
   await fs.writeFile(path.join(cwd, 'index.html'), '<h1>Workspace</h1>')
   const mock = await startMock({ script })
-  const env = { ...process.env, OQELIRA_NO_ENV_FILES: '1', FOUNDRY_BASE_URL: mock.baseURL, FOUNDRY_KEY: 'test-key' }
+  const env = { ...process.env, OQELIRA_NO_ENV_FILES: '1', OQELIRA_HOME: `${cwd}-home`, FOUNDRY_BASE_URL: mock.baseURL, FOUNDRY_KEY: 'test-key' }
   const models = [{ id: 'mai-thinking', deployment: 'MAI-Thinking-1', api: 'chat' as const, speed: 'slow' as const }]
   const host = createHost({ cwd, dist: cwd, models, configured: true, launchToken: TOKEN, startEngine: () => spawnEngine({ cwd, env, args: ['--approval-timeout-ms', String(timeout)] }) })
   const origin = await host.listen()
@@ -34,7 +34,7 @@ async function fixture(fn: (f: { cwd: string; origin: string; requests: any[]; p
     method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', 'X-Oqelira-Client': 'workspace', 'X-Oqelira-Launch': TOKEN, ...extra }, body: JSON.stringify(body),
   })
   try { await fn({ cwd, origin, requests: mock.requests, post }) }
-  finally { await host.close(); await mock.close(); await fs.rm(cwd, { recursive: true, force: true }) }
+  finally { await host.close(); await mock.close(); await fs.rm(cwd, { recursive: true, force: true }); await fs.rm(`${cwd}-home`, { recursive: true, force: true }) }
 }
 async function collect(response: Response, onEvent?: (event: HostEvent) => Promise<void>): Promise<HostEvent[]> {
   assert.equal(response.status, 200)
@@ -168,7 +168,7 @@ test('the engine never reads the workspace .env, so a project cannot redirect th
   const mock = await startMock({ script })
   // Evil project .env points the key at a dead address; the host's own environment points at the mock.
   await fs.writeFile(path.join(cwd, '.env'), 'FOUNDRY_BASE_URL=http://127.0.0.1:1/v1\n')
-  const env: NodeJS.ProcessEnv = { ...process.env, FOUNDRY_ENDPOINT: mock.baseURL.replace(/\/v1$/, ''), FOUNDRY_KEY: 'test-key' }
+  const env: NodeJS.ProcessEnv = { ...process.env, OQELIRA_HOME: `${cwd}-home`, FOUNDRY_ENDPOINT: mock.baseURL.replace(/\/v1$/, ''), FOUNDRY_KEY: 'test-key' }
   for (const k of ['OQELIRA_NO_ENV_FILES', 'FOUNDRY_BASE_URL']) delete env[k]
   const models = [{ id: 'mai-thinking', deployment: 'MAI-Thinking-1', api: 'chat' as const, speed: 'slow' as const }]
   const host = createHost({ cwd, dist: cwd, models, configured: true, launchToken: TOKEN, startEngine: () => spawnEngine({ cwd, env }) })

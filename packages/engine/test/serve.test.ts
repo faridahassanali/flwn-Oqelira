@@ -13,7 +13,7 @@ const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin',
 
 /** Starts `oqelira-engine` and gives a tiny NDJSON client over its stdio. */
 async function engine(cwd: string, baseURL: string, extra: string[] = []) {
-  const env: NodeJS.ProcessEnv = { ...process.env, OQELIRA_NO_ENV_FILES: '1', FOUNDRY_BASE_URL: baseURL, FOUNDRY_KEY: 'test-key' }
+  const env: NodeJS.ProcessEnv = { ...process.env, OQELIRA_NO_ENV_FILES: '1', OQELIRA_HOME: `${cwd}-home`, FOUNDRY_BASE_URL: baseURL, FOUNDRY_KEY: 'test-key' }
   const child = spawn(process.execPath, [BIN, '--cwd', cwd, '-m', 'mai-thinking', ...extra], { env })
   const messages: any[] = []
   const waiters: Array<() => void> = []
@@ -44,7 +44,7 @@ async function withEngine(script: Parameters<typeof startMock>[0]['script'], fn:
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'oqelira-serve-'))
   const mock = await startMock({ script })
   const e = await engine(cwd, mock.baseURL, extra)
-  try { await fn(e, cwd) } finally { e.stop(); await mock.close(); await fs.rm(cwd, { recursive: true, force: true }) }
+  try { await fn(e, cwd) } finally { e.stop(); await mock.close(); await fs.rm(cwd, { recursive: true, force: true }); await fs.rm(`${cwd}-home`, { recursive: true, force: true }) }
 }
 
 test('serve: hello handshake, rejects unknown protocol and bad JSON', async () => {
@@ -115,4 +115,45 @@ test('serve: history persists within a session and clear resets it', async () =>
     await e.until(() => e.messages.filter((m) => m.type === 'done').length === 3)
     assert.match(texts(e.messages, 2), /saw 1 user/)
   })
+})
+
+test('long chats are summarized; a restarted engine resumes with the same compact version and full history', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'oqelira-resume-'))
+  const isSummarizer = (b: any) => b.messages.find((m: any) => m.role === 'system')?.content.includes('compress a coding-agent conversation')
+  const mock = await startMock({ script: (body) => ({ text: isSummarizer(body) ? 'SUMMARY-X' : 'ok' }) })
+  try {
+    const first = await engine(cwd, mock.baseURL, ['--context-chars', '8000'])
+    for (let i = 0; i < 5; i++) {
+      first.send({ type: 'run', prompt: `step ${i} ${'x'.repeat(3000)}`, sessionId: 's1' })
+      await first.until(() => first.messages.filter((m) => m.type === 'done').length === i + 1)
+    }
+    assert.ok(first.messages.some((m) => m.type === 'notice' && /summarized/.test(m.message)), 'expected a summarization notice')
+    first.stop()
+    await new Promise((r) => first.child.once('exit', r))
+
+    const before = mock.requests.length
+    const second = await engine(cwd, mock.baseURL, ['--context-chars', '8000'])
+    second.send({ type: 'sessions' })
+    const listed = await second.until((m) => m.type === 'sessions')
+    assert.equal(listed.sessions[0].id, 's1'); assert.equal(listed.sessions[0].messages, 10)
+    second.send({ type: 'history', sessionId: 's1' })
+    assert.equal((await second.until((m) => m.type === 'history')).messages.length, 10) // full history is still there
+    second.send({ type: 'run', prompt: 'next', sessionId: 's1' })
+    await second.until((m) => m.type === 'done')
+    const resumed = mock.requests.slice(before).map((r) => r.body).find((b) => !isSummarizer(b))
+    const system = resumed.messages.find((m: any) => m.role === 'system').content
+    assert.match(system, /Earlier in this conversation[\s\S]*SUMMARY-X/) // the compact version, not a re-derived one
+    assert.ok(resumed.messages.filter((m: any) => m.role === 'user').length < 6, 'older turns are replaced by the summary')
+    second.stop()
+  } finally { await mock.close(); await fs.rm(cwd, { recursive: true, force: true }); await fs.rm(`${cwd}-home`, { recursive: true, force: true }) }
+})
+
+test('after the step limit the engine continues automatically a bounded number of times', async () => {
+  await withEngine(() => ({ toolCall: { name: 'list_dir', args: { path: '.' } } }), async (e) => {
+    e.send({ type: 'run', prompt: 'loop forever' })
+    const done = await e.until((m) => m.type === 'done', 30_000)
+    assert.equal(done.reason, 'max-steps')
+    assert.equal(e.messages.filter((m) => m.type === 'notice' && /continuing automatically \(1\/1\)/.test(m.message)).length, 1)
+    assert.equal(e.messages.filter((m) => m.type === 'tool-call').length, 4) // 2 steps x (1 + 1 continue)
+  }, ['--max-steps', '2', '--max-continues', '1'])
 })

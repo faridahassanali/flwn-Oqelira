@@ -11,6 +11,9 @@ Options:
       --yolo                  auto-approve everything (use with care)
       --max-steps <n>         stop a run after n model steps (default 25)
       --env-file <f>          extra .env file
+      --no-history            do not store sessions on disk
+      --context-chars <n>     summarize older turns above this request size (default 80000)
+      --max-continues <n>     auto-continue this many times after the step limit (default 3)
       --approval-timeout-ms   deny an unanswered approval after this long (default 120000)
   -h, --help                  show this help
 `
@@ -27,6 +30,9 @@ async function main(): Promise<number> {
         'max-steps': { type: 'string' },
         'env-file': { type: 'string' },
         'approval-timeout-ms': { type: 'string' },
+        'no-history': { type: 'boolean' },
+        'context-chars': { type: 'string' },
+        'max-continues': { type: 'string' },
         help: { type: 'boolean', short: 'h' },
       },
     }).values
@@ -38,7 +44,7 @@ async function main(): Promise<number> {
     process.stdout.write(USAGE)
     return 0
   }
-  const positive = (name: 'max-steps' | 'approval-timeout-ms') => {
+  const positive = (name: 'max-steps' | 'approval-timeout-ms' | 'context-chars' | 'max-continues') => {
     const raw = values[name]
     if (raw === undefined) return undefined
     const n = Number(raw)
@@ -53,7 +59,9 @@ async function main(): Promise<number> {
       yes: values.yes,
       yolo: values.yolo,
       maxSteps: positive('max-steps') ?? 25,
-      persistHistory: false,
+      persistHistory: !values['no-history'],
+      contextChars: positive('context-chars'),
+      maxContinues: positive('max-continues'),
     })
     await serve(engine, { approvalTimeoutMs: positive('approval-timeout-ms') })
     return 0

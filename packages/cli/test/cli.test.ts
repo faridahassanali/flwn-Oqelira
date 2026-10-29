@@ -16,6 +16,7 @@ async function workspace<T>(fn: (cwd: string) => Promise<T>): Promise<T> {
     return await fn(cwd)
   } finally {
     await fs.rm(cwd, { recursive: true, force: true })
+    await fs.rm(`${cwd}-home`, { recursive: true, force: true })
   }
 }
 
@@ -24,7 +25,8 @@ function runCli(
   opts: { cwd: string; baseURL?: string; stdin?: string; env?: Record<string, string> },
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const env: NodeJS.ProcessEnv = { ...process.env, OQELIRA_NO_ENV_FILES: '1', NO_COLOR: '1', ...opts.env }
+    // Sessions and memory live under OQELIRA_HOME; keep every test out of the real home directory.
+    const env: NodeJS.ProcessEnv = { ...process.env, OQELIRA_NO_ENV_FILES: '1', NO_COLOR: '1', OQELIRA_HOME: `${opts.cwd}-home`, ...opts.env }
     for (const k of ['FOUNDRY_KEY', 'FOUNDRY_ENDPOINT', 'FOUNDRY_BASE_URL']) delete env[k]
     if (opts.baseURL) {
       env.FOUNDRY_BASE_URL = opts.baseURL
@@ -225,12 +227,13 @@ test('interactive session restores local history and /clear removes it', async (
     const mock = await startMock({ script: (_b, n) => ({ text: `answer ${n}` }) })
     try {
       await runCli(M, { cwd, baseURL: mock.baseURL, stdin: 'first question\n/exit\n' })
-      const history = path.join(cwd, '.oqelira', 'cli-history.json')
-      assert.match(await fs.readFile(history, 'utf8'), /first question/)
-      await runCli(M, { cwd, baseURL: mock.baseURL, stdin: 'second question\n/clear\n/exit\n' })
+      await assert.rejects(fs.access(path.join(cwd, '.oqelira'))) // nothing is written into the project
+      const second = await runCli(M, { cwd, baseURL: mock.baseURL, stdin: 'second question\n/clear\n/exit\n' })
+      assert.match(second.stdout, /restored 2 local history messages/)
       const users = mock.requests.at(-1)?.body.messages.filter((m: any) => m.role === 'user').map((m: any) => m.content)
       assert.deepEqual(users, ['first question', 'second question'])
-      await assert.rejects(fs.access(history))
+      const third = await runCli(M, { cwd, baseURL: mock.baseURL, stdin: '/exit\n' })
+      assert.doesNotMatch(third.stdout, /restored/) // /clear removed the session
     } finally { await mock.close() }
   })
 })

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import readline from 'node:readline'
 import { ENGINE_PROTOCOL } from '@oqelira/protocol'
 import type { EngineMessage, EngineRequest } from '@oqelira/protocol'
+import { DEFAULT_SESSION } from './engine.js'
 import type { Engine } from './engine.js'
 
 const APPROVAL_TIMEOUT_MS = 120_000
@@ -39,6 +40,12 @@ export async function serve(engine: Engine, { input = process.stdin, output = pr
         pending.resolve(req.allowed === true)
         return
       }
+      case 'sessions':
+        send({ type: 'sessions', sessions: engine.sessions() })
+        return
+      case 'history':
+        send({ type: 'history', sessionId: req.sessionId ?? DEFAULT_SESSION, messages: await engine.history(req.sessionId) })
+        return
       case 'clear':
         if (run) { send({ type: 'error', message: 'Cannot clear while a run is active' }); return }
         await engine.clear(req.sessionId)

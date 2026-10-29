@@ -17,7 +17,9 @@ import {
 } from '@oqelira/core'
 import type { Approver, ContextGateway, Message, ModelConfig, Risk, Tool } from '@oqelira/core'
 import type { HostEvent } from '@oqelira/protocol'
-import { clearHistory, loadHistory, saveHistory } from './history.js'
+import { createCompactor } from './compaction.js'
+import { noStore, openSessionStore } from './store.js'
+import type { SessionInfo, SessionStore, Snapshot } from './store.js'
 
 export interface EngineOptions {
   cwd: string
@@ -28,8 +30,12 @@ export interface EngineOptions {
   /** Auto-approve everything, including shell commands and network. */
   yolo?: boolean
   maxSteps?: number
-  /** Keep the default session on disk (CLI only). */
+  /** Keep sessions (full history plus latest compact snapshot) on disk. */
   persistHistory?: boolean
+  /** Request size, in characters, above which older turns are summarized. */
+  contextChars?: number
+  /** After hitting the step limit, keep going this many more times. */
+  maxContinues?: number
 }
 
 export interface RunIO {
@@ -48,7 +54,8 @@ export interface Engine {
   setModel(id: string): ModelConfig
   /** Summary line the interfaces show for a tool call. */
   describe(name: string, input: unknown): string
-  history(sessionId?: string): Message[]
+  history(sessionId?: string): Promise<Message[]>
+  sessions(): SessionInfo[]
   clear(sessionId?: string): Promise<void>
   run(prompt: string, io: RunIO): Promise<{ ok: boolean; finishReason: string }>
 }
@@ -70,6 +77,8 @@ function readProjectRules(cwd: string): string {
 export async function createEngine(opts: EngineOptions): Promise<Engine> {
   const cwd = path.resolve(opts.cwd)
   if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) throw new Error(`Not a directory: ${cwd}`)
+  // Read before any .env loads: a project's own .env must not choose where history and memory are written.
+  const stateRoot = process.env.OQELIRA_HOME
   loadEnvFiles({ explicit: opts.envFile, cwd })
 
   let config
@@ -88,7 +97,7 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
   const startupNotices: string[] = []
   if (embeddingDeployment) {
     try {
-      memory = await openLocalMemory(cwd, createFoundryEmbedder(config)(embeddingDeployment))
+      memory = await openLocalMemory(cwd, createFoundryEmbedder(config)(embeddingDeployment), stateRoot)
     } catch (e) {
       startupNotices.push(`Project memory disabled: ${(e as Error).message}`)
     }
@@ -97,9 +106,37 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
   const autoAllow: Risk[] = ['read', ...(opts.yes || opts.yolo ? (['write'] as Risk[]) : []), ...(opts.yolo ? (['exec', 'network'] as Risk[]) : [])]
   const system = DEFAULT_SYSTEM + readProjectRules(cwd)
 
-  const sessions = new Map<string, Message[]>()
-  if (opts.persistHistory) sessions.set(DEFAULT_SESSION, await loadHistory(cwd))
-  const persists = (id: string) => opts.persistHistory && id === DEFAULT_SESSION
+  let store: SessionStore = noStore
+  if (opts.persistHistory) {
+    try {
+      store = await openSessionStore(cwd, stateRoot)
+    } catch (e) {
+      startupNotices.push(`Session history disabled: ${(e as Error).message}`)
+    }
+  }
+  interface State { messages: Message[]; snapshot?: Snapshot; persisted: number }
+  const states = new Map<string, State>()
+  const stateOf = (id: string): State => {
+    let st = states.get(id)
+    if (!st) {
+      const loaded = store.load(id)
+      st = { messages: loaded?.messages ?? [], snapshot: loaded?.snapshot, persisted: loaded?.messages.length ?? 0 }
+      states.set(id, st)
+    }
+    return st
+  }
+  /**
+   * Stored once per completed run segment, never mid-run: a failed or interrupted run is dropped from
+   * memory, so the durable copy must drop it too or the two would drift apart.
+   */
+  const persist = (id: string, st: State) => {
+    if (st.messages.length > st.persisted) {
+      store.append(id, st.messages, st.persisted, { model: model.id })
+      st.persisted = st.messages.length
+    }
+  }
+  const contextChars = opts.contextChars ?? 80_000
+  const maxContinues = opts.maxContinues ?? 3
 
   return {
     cwd,
@@ -121,14 +158,17 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
         return name // malformed input; the tool will report it
       }
     },
-    history: (id = DEFAULT_SESSION) => sessions.get(id) ?? [],
+    async history(id = DEFAULT_SESSION) {
+      return stateOf(id).messages
+    },
+    sessions: () => store.list(),
     async clear(id = DEFAULT_SESSION) {
-      sessions.delete(id)
-      if (persists(id)) await clearHistory(cwd)
+      states.delete(id)
+      store.remove(id)
     },
     async run(prompt, io) {
       const id = io.sessionId ?? DEFAULT_SESSION
-      const history = sessions.get(id) ?? []
+      const st = stateOf(id)
       for (const message of startupNotices.splice(0)) io.onEvent({ type: 'notice', message })
       let recalled = ''
       if (memory) {
@@ -138,26 +178,43 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
           io.onEvent({ type: 'notice', message: `Memory recall skipped: ${(e as Error).message}` })
         }
       }
+      const provider = makeProvider(model)
+      const compact = createCompactor({
+        provider,
+        budget: contextChars,
+        getSnapshot: () => st.snapshot,
+        save: (summary, coversThrough) => (st.snapshot = store.saveSnapshot(id, summary, coversThrough)),
+        notice: (message) => io.onEvent({ type: 'notice', message }),
+      })
       try {
-        const result = await runAgent({
-          provider: makeProvider(model),
-          prompt,
-          tools,
-          cwd,
-          system: system + recalled,
-          history,
-          maxSteps: opts.maxSteps,
-          permissions: { autoAllow, approve: io.approve },
-          signal: io.signal,
-          onText: (text) => io.onEvent({ type: 'text', text }),
-          onContextCompacted: (info) => io.onEvent({ type: 'context-compacted', ...info }),
-          onToolCall: (call) => io.onEvent({ type: 'tool-call', id: call.id, name: call.name, input: call.input }),
-          onToolResult: (r) => io.onEvent({ type: 'tool-result', id: r.id, name: r.name, output: r.output, isError: r.isError }),
-        })
-        sessions.set(id, result.messages)
-        if (persists(id)) await saveHistory(cwd, result.messages)
-        io.onEvent({ type: 'done', reason: result.finishReason })
-        return { ok: result.finishReason === 'stop', finishReason: result.finishReason }
+        let next = prompt
+        for (let attempt = 0; ; attempt++) {
+          const result = await runAgent({
+            provider,
+            prompt: next,
+            tools,
+            cwd,
+            system: system + recalled,
+            history: st.messages,
+            maxSteps: opts.maxSteps,
+            permissions: { autoAllow, approve: io.approve },
+            signal: io.signal,
+            compact,
+            onText: (text) => io.onEvent({ type: 'text', text }),
+            onContextCompacted: (info) => io.onEvent({ type: 'context-compacted', ...info }),
+            onToolCall: (call) => io.onEvent({ type: 'tool-call', id: call.id, name: call.name, input: call.input }),
+            onToolResult: (r) => io.onEvent({ type: 'tool-result', id: r.id, name: r.name, output: r.output, isError: r.isError }),
+          })
+          st.messages = result.messages
+          persist(id, st)
+          if (result.finishReason === 'max-steps' && attempt < maxContinues) {
+            io.onEvent({ type: 'notice', message: `Step limit reached; continuing automatically (${attempt + 1}/${maxContinues}).` })
+            next = 'Continue the task from where you stopped. If it is already complete, say so briefly.'
+            continue
+          }
+          io.onEvent({ type: 'done', reason: result.finishReason })
+          return { ok: result.finishReason === 'stop', finishReason: result.finishReason }
+        }
       } catch (e) {
         // Status and message only: SDK errors can carry upstream request headers or bodies.
         const err = e as { message?: string; statusCode?: number }

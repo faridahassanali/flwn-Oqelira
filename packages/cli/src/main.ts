@@ -85,7 +85,7 @@ async function main(): Promise<number> {
       yes: values.yes,
       yolo: values.yolo,
       maxSteps,
-      persistHistory: !serving && !values['no-history'],
+      persistHistory: !values['no-history'],
     })
   } catch (e) {
     process.stderr.write(`${(e as Error).message}\n`)
@@ -190,7 +190,7 @@ async function main(): Promise<number> {
 
   // ---- interactive session
   out(`${bold('oqelira')} ${dim(`model ${engine.model.id} (${engine.model.api}) | ${cwd}`)}\n${dim(SESSION_HELP)}\n`)
-  const restored = engine.history().length
+  const restored = (await engine.history()).length
   if (restored) out(`${dim(`restored ${restored} local history messages`)}\n`)
   for (;;) {
     const line = await lines.next(`${bold('> ')}`)
