@@ -10,7 +10,8 @@
     "test": "node --import tsx --test test/*.test.ts"
   },
   "dependencies": {
-    "@oqelira/core": "*"
+    "@oqelira/core": "*",
+    "@oqelira/protocol": "*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

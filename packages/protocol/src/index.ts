@@ -24,4 +24,21 @@ export type HostEvent = { sequence?: number } & (
   | { type: 'done'; reason: string }
   | { type: 'error'; message: string }
   | { type: 'connection'; state: 'reconnecting' | 'connected' }
+  | { type: 'notice'; message: string }
 )
+
+/**
+ * Engine protocol: newline-delimited JSON over stdio (`oqelira serve`). The CLI is the engine; the web host
+ * and VS Code are interfaces that speak this. Credentials travel in the engine's environment, never here.
+ */
+export const ENGINE_PROTOCOL = 1
+export type EngineRequest =
+  | { type: 'hello'; protocol: number }
+  | { type: 'run'; prompt: string; model?: string; sessionId?: string }
+  | { type: 'approval'; approvalId: string; allowed: boolean }
+  | { type: 'cancel' }
+  | { type: 'clear'; sessionId?: string }
+export type EngineMessage =
+  | { type: 'ready'; protocol: number; version: string; cwd: string; model: string; models: { id: string; deployment: string }[]; memory: boolean; webSearch: boolean }
+  | { type: 'cleared' }
+  | HostEvent

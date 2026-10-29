@@ -1,25 +1,11 @@
-import fs from 'node:fs'
-import path from 'node:path'
 import { parseArgs } from 'node:util'
-import {
-  DEFAULT_MODELS,
-  DEFAULT_SYSTEM,
-  builtinTools,
-  webTools,
-  memoryTools,
-  createFoundryEmbedder,
-  openLocalMemory,
-  recallBlock,
-  createFoundry,
-  findModel,
-  foundryConfigFromEnv,
-  runAgent,
-} from '@oqelira/core'
-import type { ContextGateway, Approver, Message, ModelConfig, Risk } from '@oqelira/core'
+import { DEFAULT_MODELS } from '@oqelira/core'
+import type { Approver, Risk } from '@oqelira/core'
 import { renderApproval } from './approval.js'
-import { loadEnvFiles } from './env.js'
+import { createEngine } from './engine.js'
+import type { Engine } from './engine.js'
 import { LineReader } from './lines.js'
-import { clearHistory, loadHistory, saveHistory } from './history.js'
+import { serve } from './serve.js'
 import { bold, cyan, dim, green, red, yellow } from './ui.js'
 
 const USAGE = `oqelira - AI coding agent by Flwn
@@ -39,23 +25,14 @@ Options:
       --list-models     show the available models
   -h, --help            show this help
 
+Subcommands:
+  oqelira serve         headless engine for the web host and VS Code (JSON lines on stdin/stdout)
+
 In the session:  /model <id>   /clear   /help   /exit      Ctrl+C interrupts a running task.
 Project rules are read from OQELIRA.md (or AGENTS.md) in the project directory.
 `
 
 const SESSION_HELP = '/model <id>  switch model   /clear  forget saved conversation   /exit  quit   Ctrl+C  interrupt'
-
-function readProjectRules(cwd: string): string {
-  for (const name of ['OQELIRA.md', 'AGENTS.md']) {
-    try {
-      const text = fs.readFileSync(path.join(cwd, name), 'utf8').slice(0, 20_000)
-      return `\n\nProject instructions (from ${name}):\n${text}`
-    } catch {
-      /* not there */
-    }
-  }
-  return ''
-}
 
 function oneLine(text: string, max = 110): string {
   const first = text.split(/\r?\n/).find((l) => l.trim()) ?? ''
@@ -93,49 +70,32 @@ async function main(): Promise<number> {
     return 0
   }
 
-  const cwd = path.resolve(values.cwd ?? process.cwd())
-  if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) {
-    process.stderr.write(`Not a directory: ${cwd}\n`)
-    return 2
-  }
-  loadEnvFiles({ explicit: values['env-file'], cwd })
-
-  let config
-  try {
-    config = foundryConfigFromEnv()
-  } catch (e) {
-    process.stderr.write(
-      `${(e as Error).message}\nSet them in the environment, or in ~/.oqelira/.env, or in ./.env, or pass --env-file.\n`,
-    )
-    return 2
-  }
-
-  let model: ModelConfig
-  try {
-    model = findModel(values.model ?? process.env.OQELIRA_MODEL ?? 'gpt-6-sol')
-  } catch (e) {
-    process.stderr.write(`${(e as Error).message}\n`)
-    return 2
-  }
   const maxSteps = values['max-steps'] ? Number(values['max-steps']) : 25
   if (!Number.isInteger(maxSteps) || maxSteps < 1) {
     process.stderr.write('--max-steps must be a positive integer\n')
     return 2
   }
-
-  const makeProvider = createFoundry(config)
-  // Project memory is on only when an embedding deployment is configured (never hardcoded).
-  let memory: ContextGateway | undefined
-  const embeddingDeployment = process.env.OQELIRA_EMBEDDING_DEPLOYMENT?.trim()
-  if (embeddingDeployment) {
-    try {
-      memory = await openLocalMemory(cwd, createFoundryEmbedder(config)(embeddingDeployment))
-    } catch (e) {
-      process.stderr.write(`Project memory disabled: ${(e as Error).message}\n`)
-    }
+  const serving = positionals[0] === 'serve'
+  let engine: Engine
+  try {
+    engine = await createEngine({
+      cwd: values.cwd ?? process.cwd(),
+      envFile: values['env-file'],
+      model: values.model,
+      yes: values.yes,
+      yolo: values.yolo,
+      maxSteps,
+      persistHistory: !serving && !values['no-history'],
+    })
+  } catch (e) {
+    process.stderr.write(`${(e as Error).message}\n`)
+    return 2
   }
-  const system = DEFAULT_SYSTEM + readProjectRules(cwd)
-  const autoAllow: Risk[] = ['read', ...(values.yes || values.yolo ? (['write'] as Risk[]) : []), ...(values.yolo ? (['exec', 'network'] as Risk[]) : [])]
+  if (serving) {
+    await serve(engine)
+    return 0
+  }
+  const { cwd } = engine
 
   const lines = new LineReader()
   const alwaysAllow = new Set<Risk>()
@@ -170,64 +130,47 @@ async function main(): Promise<number> {
     }
   })
 
-  const tools = [...builtinTools, ...webTools(), ...(memory ? memoryTools(memory) : [])]
-
-  async function memoryContext(prompt: string): Promise<string> {
-    if (!memory) return ''
-    try {
-      return await recallBlock(memory, prompt, current?.signal)
-    } catch (e) {
-      out(`${dim(`Memory recall skipped: ${(e as Error).message}`)}\n`)
-      return ''
-    }
-  }
-
-  async function runTurn(prompt: string, history: Message[]): Promise<{ ok: boolean; messages: Message[] }> {
+  async function runTurn(prompt: string): Promise<boolean> {
     current = new AbortController()
+    let reason = ''
     try {
-      const result = await runAgent({
-        provider: makeProvider(model),
-        prompt,
-        tools,
-        cwd,
-        system: system + (await memoryContext(prompt)),
-        history,
-        maxSteps,
-        permissions: { autoAllow, approve },
+      const result = await engine.run(prompt, {
         signal: current.signal,
-        onText: (d) => out(d),
-        onContextCompacted: () => out(`${dim('Older context compacted for this request; full conversation history is retained.')}\n`),
-        onToolCall: (call) => {
-          ensureNewline()
-          const tool = tools.find((t) => t.spec.name === call.name)
-          let summary = call.name
-          try {
-            summary = tool ? tool.describe(call.input) : call.name
-          } catch {
-            /* malformed input; the tool will report it */
+        approve,
+        onEvent: (e) => {
+          switch (e.type) {
+            case 'text':
+              out(e.text)
+              break
+            case 'context-compacted':
+              out(`${dim('Older context compacted for this request; full conversation history is retained.')}\n`)
+              break
+            case 'notice':
+              ensureNewline()
+              out(`${dim(e.message)}\n`)
+              break
+            case 'tool-call':
+              ensureNewline()
+              out(`${cyan('>')} ${dim(engine.describe(e.name, e.input))}\n`)
+              break
+            case 'tool-result':
+              out(`${e.isError ? red('  x ') : dim('  ok ')}${dim(oneLine(e.output))}\n`)
+              break
+            case 'done':
+              reason = e.reason
+              break
+            case 'error':
+              ensureNewline()
+              out(e.message === 'Run stopped' ? `${yellow('(interrupted)')}\n` : `${red(`error: ${e.message}`)}\n`)
+              break
           }
-          out(`${cyan('>')} ${dim(summary)}\n`)
-        },
-        onToolResult: (r) => {
-          const mark = r.isError ? red('  x ') : dim('  ok ')
-          out(`${mark}${dim(oneLine(r.output))}\n`)
         },
       })
       ensureNewline()
-      if (result.finishReason === 'max-steps') out(`${yellow(`Stopped after ${maxSteps} steps.`)} Say "continue" to go on.\n`)
-      if (result.finishReason === 'length') out(`${yellow('The reply was cut off (output limit).')}\n`)
-      if (result.finishReason === 'other') out(`${yellow('The model stream ended without a completion signal. Review the output before continuing.')}\n`)
-      return { ok: result.finishReason === 'stop', messages: result.messages }
-    } catch (e) {
-      ensureNewline()
-      if (current?.signal.aborted) {
-        out(`${yellow('(interrupted)')}\n`)
-      } else {
-        const err = e as { message?: string; statusCode?: number; responseBody?: string }
-        out(`${red(`error: ${err.statusCode ? `[${err.statusCode}] ` : ''}${err.message ?? String(e)}`)}\n`)
-        if (err.responseBody) out(`${dim(err.responseBody.slice(0, 300))}\n`)
-      }
-      return { ok: false, messages: history }
+      if (reason === 'max-steps') out(`${yellow(`Stopped after ${maxSteps} steps.`)} Say "continue" to go on.\n`)
+      if (reason === 'length') out(`${yellow('The reply was cut off (output limit).')}\n`)
+      if (reason === 'other') out(`${yellow('The model stream ended without a completion signal. Review the output before continuing.')}\n`)
+      return result.ok
     } finally {
       current = null
     }
@@ -235,15 +178,15 @@ async function main(): Promise<number> {
 
   // ---- one-shot
   if (positionals.length > 0) {
-    const { ok } = await runTurn(positionals.join(' '), [])
+    const ok = await runTurn(positionals.join(' '))
     lines.close()
     return ok ? 0 : 1
   }
 
   // ---- interactive session
-  out(`${bold('oqelira')} ${dim(`model ${model.id} (${model.api}) | ${cwd}`)}\n${dim(SESSION_HELP)}\n`)
-  let history: Message[] = values['no-history'] ? [] : await loadHistory(cwd)
-  if (history.length) out(`${dim(`restored ${history.length} local history messages`)}\n`)
+  out(`${bold('oqelira')} ${dim(`model ${engine.model.id} (${engine.model.api}) | ${cwd}`)}\n${dim(SESSION_HELP)}\n`)
+  const restored = engine.history().length
+  if (restored) out(`${dim(`restored ${restored} local history messages`)}\n`)
   for (;;) {
     const line = await lines.next(`${bold('> ')}`)
     if (line === null) break
@@ -255,18 +198,17 @@ async function main(): Promise<number> {
       continue
     }
     if (text === '/clear') {
-      history = []
-      if (!values['no-history']) await clearHistory(cwd)
+      await engine.clear()
       out(`${dim('conversation cleared')}\n`)
       continue
     }
     if (text.startsWith('/model')) {
       const id = text.split(/\s+/)[1]
       if (!id) {
-        out(`${dim(`current: ${model.id}. available: ${DEFAULT_MODELS.map((m) => m.id).join(', ')}`)}\n`)
+        out(`${dim(`current: ${engine.model.id}. available: ${engine.models.map((m) => m.id).join(', ')}`)}\n`)
       } else {
         try {
-          model = findModel(id)
+          const model = engine.setModel(id)
           out(`${green('model:')} ${model.id} ${dim(`(${model.api})`)}\n`)
         } catch (e) {
           out(`${red((e as Error).message)}\n`)
@@ -278,11 +220,7 @@ async function main(): Promise<number> {
       out(`${dim(`unknown command. ${SESSION_HELP}`)}\n`)
       continue
     }
-    const result = await runTurn(text, history)
-    if (result.ok || result.messages !== history) {
-      history = result.messages
-      if (!values['no-history']) await saveHistory(cwd, history)
-    }
+    await runTurn(text)
   }
   lines.close()
   return 0
