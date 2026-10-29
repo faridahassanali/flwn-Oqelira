@@ -52,3 +52,17 @@ test('memory tools: recall is read, save/forget need approval', async () => {
     await assert.rejects(tools.recall_memory!.run({ query: 'x', limit: 11 }, { cwd: root }))
   } finally { await fs.rm(root, { recursive: true, force: true }) }
 })
+
+test('memory refuses a .oqelira directory or database that is a symlink', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'oq-mem-link-'))
+  const elsewhere = await fs.mkdtemp(path.join(os.tmpdir(), 'oq-mem-target-'))
+  try {
+    await fs.symlink(elsewhere, path.join(root, '.oqelira'), 'dir')
+    await assert.rejects(openLocalMemory(root, fake()), /real directory/)
+    await fs.rm(path.join(root, '.oqelira'))
+    await fs.mkdir(path.join(root, '.oqelira'))
+    await fs.symlink(path.join(elsewhere, 'x.sqlite'), path.join(root, '.oqelira', 'memory.sqlite'))
+    await assert.rejects(openLocalMemory(root, fake()), /regular file/)
+    assert.deepEqual(await fs.readdir(elsewhere), [])
+  } finally { await fs.rm(root, { recursive: true, force: true }); await fs.rm(elsewhere, { recursive: true, force: true }) }
+})

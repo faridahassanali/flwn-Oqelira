@@ -23,9 +23,18 @@ export function cosine(a: ArrayLike<number>, b: ArrayLike<number>): number {
  */
 export async function openLocalMemory(cwd: string, embedder: EmbeddingProvider): Promise<ContextGateway> {
   const { DatabaseSync } = await import('node:sqlite')
-  const dir = path.join(cwd, '.oqelira')
-  fs.mkdirSync(dir, { recursive: true })
-  const db = new DatabaseSync(path.join(dir, 'memory.sqlite'))
+  // A cloned repo could ship .oqelira (or memory.sqlite) as a symlink to redirect where we read/write.
+  const dir = path.join(fs.realpathSync(cwd), '.oqelira')
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
+  if (!fs.lstatSync(dir).isDirectory()) throw new Error('.oqelira must be a real directory, not a link')
+  const file = path.join(dir, 'memory.sqlite')
+  try {
+    if (!fs.lstatSync(file).isFile()) throw new Error('memory.sqlite must be a regular file, not a link')
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e
+    fs.closeSync(fs.openSync(file, 'wx', 0o600))
+  }
+  const db = new DatabaseSync(file)
   db.exec(`CREATE TABLE IF NOT EXISTS memory (
     id TEXT PRIMARY KEY, text TEXT NOT NULL, kind TEXT NOT NULL, source TEXT,
     created_at TEXT NOT NULL, model TEXT NOT NULL, dim INTEGER NOT NULL, embedding BLOB NOT NULL)`)
