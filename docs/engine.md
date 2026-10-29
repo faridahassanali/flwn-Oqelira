@@ -30,6 +30,23 @@ Messages out: `ready`, then `HostEvent`s (`started`, `text`, `tool-call`, `tool-
 stdout carries protocol only; diagnostics go to stderr. Credentials travel in the engine's
 environment, never in a message. Approvals fail closed: unanswered, cancelled, or stdin closed = denied.
 
+## Sessions and context
+
+Every session is stored by the engine in SQLite at `~/.oqelira/projects/<hash of project path>/sessions.sqlite`
+(0600; outside the repo). `OQELIRA_HOME` moves that root; it is read from the real environment before any
+`.env` loads, so a project cannot redirect it.
+
+- `messages`: the full history, append-only, one row per message, credentials redacted before storage.
+- `context_snapshots`: the latest compact version (a model-written summary plus `covers_through`, the number
+  of leading messages it replaces). Versions are kept.
+- Rows carry UUIDs, a `content_hash`, `device_id` and a nullable `synced_at`, so syncing later is a plain copy.
+
+When a request grows past `--context-chars` (default 80000), the engine folds older whole turns into a new
+snapshot (one extra model call) and sends `summary + recent turns`. If the summary call fails it falls back to
+truncated excerpts, so a run never dies on compaction. On resume the saved snapshot is used as-is, and the
+protocol's `sessions` and `history` requests return the list and the full transcript for display.
+After the step limit the engine continues by itself up to `--max-continues` times (default 3).
+
 ## Phases
 
 1. **Done:** `createEngine` ([engine.ts](../packages/engine/src/engine.ts)), the terminal CLI on top of it,
