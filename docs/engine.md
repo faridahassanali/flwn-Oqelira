@@ -68,6 +68,14 @@ Declining stores nothing and is not asked again for the same messages. Recalled 
 The pattern filter is a backstop, not a guarantee. Sessions are marked as mined only after a successful
 extraction, so a failure retries next time.
 
+## Permission rules
+
+Order for a tool call: risks auto-allowed by flags (`--yes`, `--yolo`) -> saved always-allow rules -> the `decide` hook -> ask the user. No answer means denied.
+
+- Answering an approval with `always: "project" | "user"` (CLI: `p` / `u`) saves a rule. Rules live in `~/.oqelira/permissions.json` (user) and `~/.oqelira/projects/<hash>/permissions.json` (project), mode 0600. They are never read from the repository, so a cloned project cannot grant itself access.
+- A command rule matches that exact command only (no prefix matching, which `git status; rm -rf ~` would defeat). Other tools match by name. To revoke, edit the file.
+- `decide` (`EngineOptions.decide`, `Permissions.decide`) is the auto-mode hook: return `allow` or `deny`, or nothing to fall through to the user. The Decision-1 classifier (issue #11) plugs in here.
+
 ## Terminal safety
 
 Anything model- or file-sourced that is printed in a terminal goes through `plainText` (core): escape sequences

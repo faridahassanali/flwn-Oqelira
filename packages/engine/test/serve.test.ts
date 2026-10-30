@@ -73,6 +73,28 @@ test('serve: a write waits for approval over the protocol, then runs', async () 
   })
 })
 
+test('serve: "always" saves a rule so the same write is never asked again, even after a restart', async () => {
+  const script = (body: any): Reply => body.messages.at(-1).role === 'tool' ? { text: 'ok' } : { toolCall: { name: 'write_file', args: { path: 'out.txt', content: 'hello' } } }
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'oqelira-serve-'))
+  const mock = await startMock({ script })
+  try {
+    let e = await engine(cwd, mock.baseURL)
+    e.send({ type: 'run', prompt: 'one' })
+    const ask = await e.until((m) => m.type === 'approval')
+    e.send({ type: 'approval', approvalId: ask.approval.id, allowed: true, always: 'project' })
+    await e.until((m) => m.type === 'done')
+    e.send({ type: 'run', prompt: 'two' })
+    await e.until((m) => m.type === 'done' && e.messages.filter((x) => x.type === 'done').length === 2)
+    assert.equal(e.messages.filter((m) => m.type === 'approval').length, 1)
+    e.stop()
+    e = await engine(cwd, mock.baseURL)
+    e.send({ type: 'run', prompt: 'three' })
+    await e.until((m) => m.type === 'done')
+    assert.equal(e.messages.filter((m) => m.type === 'approval').length, 0)
+    e.stop()
+  } finally { await mock.close(); await fs.rm(cwd, { recursive: true, force: true }); await fs.rm(`${cwd}-home`, { recursive: true, force: true }) }
+})
+
 test('serve: denied approval and cancel are fail-closed', async () => {
   await withEngine(writeThenAnswer, async (e, cwd) => {
     e.send({ type: 'run', prompt: 'write it' })

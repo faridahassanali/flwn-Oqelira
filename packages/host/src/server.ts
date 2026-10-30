@@ -69,11 +69,11 @@ export function createHost(opts: HostOptions) {
       }
       if (req.method === 'POST' && url.pathname === '/api/approval') {
         const body = await json(req)
-        if (typeof body.runId !== 'string' || typeof body.approvalId !== 'string' || typeof body.allowed !== 'boolean') throw new HttpError(400, 'Invalid approval')
+        if (typeof body.runId !== 'string' || typeof body.approvalId !== 'string' || typeof body.allowed !== 'boolean' || (body.always !== undefined && body.always !== 'project' && body.always !== 'user')) throw new HttpError(400, 'Invalid approval')
         const run = runs.get(body.runId)
         if (!run?.pending || run.pending !== body.approvalId) throw new HttpError(409, 'Approval is no longer pending')
         run.pending = undefined
-        engine?.send({ type: 'approval', approvalId: body.approvalId, allowed: body.allowed })
+        engine?.send({ type: 'approval', approvalId: body.approvalId, allowed: body.allowed, always: body.always })
         reply(res, 200, { ok: true })
         return
       }

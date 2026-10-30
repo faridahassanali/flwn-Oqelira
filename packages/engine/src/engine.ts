@@ -15,10 +15,11 @@ import {
   runAgent,
   webTools,
 } from '@oqelira/core'
-import type { Approver, ContextGateway, MemoryEntry, Message, ModelConfig, Risk, Tool } from '@oqelira/core'
+import type { ApprovalRequest, Approver, ContextGateway, MemoryEntry, Message, ModelConfig, Permissions, Risk, Tool } from '@oqelira/core'
 import type { HostEvent } from '@oqelira/protocol'
 import { createCompactor } from './compaction.js'
 import { extractFacts, saveFacts, selectFacts } from './memorize.js'
+import { openRules } from './rules.js'
 import { noStore, openSessionStore } from './store.js'
 import type { SessionInfo, SessionStore, Snapshot } from './store.js'
 
@@ -39,6 +40,8 @@ export interface EngineOptions {
   autoMemory?: boolean
   /** After hitting the step limit, keep going this many more times. */
   maxContinues?: number
+  /** Auto-mode hook: consulted after saved rules, before the user is asked. */
+  decide?: Permissions['decide']
 }
 
 export interface RunIO {
@@ -57,6 +60,8 @@ export interface Engine {
   setModel(id: string): ModelConfig
   /** Summary line the interfaces show for a tool call. */
   describe(name: string, input: unknown): string
+  /** Remember an approved request so it is never asked again (commands: this exact command only). */
+  allowAlways(req: ApprovalRequest, scope: 'project' | 'user'): void
   history(sessionId?: string): Promise<Message[]>
   sessions(): SessionInfo[]
   /** Mines the session's new messages for durable facts and saves them. Returns what was saved. */
@@ -112,6 +117,8 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
   }
   const tools: Tool[] = [...builtinTools, ...webTools(), ...(memory ? memoryTools(memory) : [])]
   const autoAllow: Risk[] = ['read', ...(opts.yes || opts.yolo ? (['write'] as Risk[]) : []), ...(opts.yolo ? (['exec', 'network'] as Risk[]) : [])]
+  const rules = openRules(cwd, stateRoot)
+  const decide: Permissions['decide'] = (req) => (rules.allows(req) ? 'allow' : opts.decide?.(req))
   const system = DEFAULT_SYSTEM + readProjectRules(cwd)
 
   let store: SessionStore = noStore
@@ -158,6 +165,7 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
       model = findModel(id, models)
       return model
     },
+    allowAlways: (req, scope) => rules.add(req, scope),
     describe(name, input) {
       const tool = tools.find((t) => t.spec.name === name)
       try {
@@ -237,7 +245,7 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
             system: system + recalled,
             history: st.messages,
             maxSteps: opts.maxSteps,
-            permissions: { autoAllow, approve: io.approve },
+            permissions: { autoAllow, decide, approve: io.approve },
             signal: io.signal,
             compact,
             onText: (text) => io.onEvent({ type: 'text', text }),

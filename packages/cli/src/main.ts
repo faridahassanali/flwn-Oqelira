@@ -110,10 +110,14 @@ async function main(): Promise<number> {
   const approve: Approver = async (req) => {
     if (alwaysAllow.has(req.risk)) return true
     process.stdout.write(`${renderApproval(req)}\n`)
-    const answer = await lines.next(`Allow? [y]es / [n]o / [a]lways for ${req.risk} this session: `)
+    const answer = await lines.next(`Allow? [y]es / [n]o / [a]lways ${req.risk} this session / [p]roject / [u]ser (saved): `)
     const a = (answer ?? '').trim().toLowerCase()
     if (a === 'a' || a === 'always') {
       alwaysAllow.add(req.risk)
+      return true
+    }
+    if (a === 'p' || a === 'u') {
+      engine.allowAlways(req, a === 'p' ? 'project' : 'user')
       return true
     }
     return a === 'y' || a === 'yes'

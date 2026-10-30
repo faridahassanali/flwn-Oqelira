@@ -35,7 +35,7 @@ export const ENGINE_PROTOCOL = 1
 export type EngineRequest =
   | { type: 'hello'; protocol: number }
   | { type: 'run'; prompt: string; model?: string; sessionId?: string }
-  | { type: 'approval'; approvalId: string; allowed: boolean }
+  | { type: 'approval'; approvalId: string; allowed: boolean; always?: 'project' | 'user' }
   | { type: 'cancel' }
   | { type: 'clear'; sessionId?: string }
   | { type: 'sessions' }

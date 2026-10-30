@@ -3,10 +3,11 @@ import readline from 'node:readline'
 import { ENGINE_PROTOCOL } from '@oqelira/protocol'
 import type { EngineMessage, EngineRequest } from '@oqelira/protocol'
 import { DEFAULT_SESSION } from './engine.js'
+import type { ApprovalRequest } from '@oqelira/core'
 import type { Engine } from './engine.js'
 
 const APPROVAL_TIMEOUT_MS = 120_000
-interface ActiveRun { controller: AbortController; pending?: { id: string; resolve(allowed: boolean): void } }
+interface ActiveRun { controller: AbortController; pending?: { id: string; request: ApprovalRequest; resolve(allowed: boolean): void } }
 
 /**
  * Headless engine: NDJSON requests on stdin, NDJSON messages on stdout (stdout carries protocol only;
@@ -24,7 +25,7 @@ export async function serve(engine: Engine, { input = process.stdin, output = pr
       if (current.controller.signal.aborted) { resolve(false); return }
       const id = randomUUID()
       const timer = setTimeout(() => { if (current.pending?.id === id) { current.pending = undefined; resolve(false) } }, approvalTimeoutMs)
-      current.pending = { id, resolve: (allowed) => { clearTimeout(timer); resolve(allowed) } }
+      current.pending = { id, request, resolve: (allowed) => { clearTimeout(timer); resolve(allowed) } }
       send({ type: 'approval', approval: { ...request, id } })
     })
 
@@ -48,6 +49,7 @@ export async function serve(engine: Engine, { input = process.stdin, output = pr
         const pending = run?.pending
         if (!pending || pending.id !== req.approvalId) { send({ type: 'error', message: 'Approval is no longer pending' }); return }
         if (run) run.pending = undefined
+        if (req.allowed === true && (req.always === 'project' || req.always === 'user')) engine.allowAlways(pending.request, req.always)
         pending.resolve(req.allowed === true)
         return
       }
