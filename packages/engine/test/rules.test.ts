@@ -151,6 +151,13 @@ test('a hand-written rule still cannot cover a protected file', () => {
   assert.ok(!openRules(cwd, root).allows(write('src/a.ts')), 'a tool-wide write rule does not cover file writes')
 })
 
+test('writes without a file path (memory tools) are never remembered', () => {
+  const rules = openRules(tmp(), tmp())
+  const save = { tool: 'save_memory', risk: 'write' as const, summary: 'save', input: { facts: ['x'] } }
+  assert.equal(rules.add(save, 'project'), false)
+  assert.ok(!rules.allows(save))
+})
+
 test('network never persists; user scope refuses commands and writes; bad files mean no rules; files are private', () => {
   const root = tmp()
   const cwd = tmp()

@@ -15,7 +15,7 @@ import type { ApprovalRequest } from '@oqelira/core'
  *   file (`node build.js`) is not covered; hash that file too if it matters.
  * - Writes match by directory (not recursive), and never cover files that can become code or config
  *   (any dot-file or dot-directory, node_modules, the command-defining files) - those always ask.
- * - Other tools (no path, no command) match by name. Network never persists (see add).
+ * - Reads match by tool name. Network never persists, and writes without a file path (memory tools) are always asked.
  */
 export interface Rule { tool: string; command?: string; fingerprint?: string; dir?: string }
 
@@ -165,7 +165,8 @@ export function openRules(cwd: string, stateRoot = path.join(os.homedir(), '.oqe
     }
     if (req.risk === 'write') {
       const dir = writeDir(cwd, req)
-      return dir === null ? null : dir === undefined ? { tool: req.tool } : { tool: req.tool, dir }
+      // A write with no path (save_memory...) has nothing narrow to bind a rule to: always asked.
+      return dir === null || dir === undefined ? null : { tool: req.tool, dir }
     }
     return { tool: req.tool }
   }

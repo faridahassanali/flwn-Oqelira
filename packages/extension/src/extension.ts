@@ -71,8 +71,9 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }
     const note = approval.risk === 'network' ? 'This sends the query to an external service.\n\n' : approval.risk === 'exec' ? 'This local shell command can access your computer.\n\n' : 'Review the proposed change.\n\n'
-    // Network calls are never remembered by the engine, so the option is not offered for them.
-    const choices = approval.risk === 'network' ? ['Allow once', 'Deny'] : ['Allow once', 'Always allow in this project', 'Deny']
+    // Only offered where the engine can save a narrow rule: a command, or a write to a file. Never network or memory tools.
+    const rememberable = approval.risk === 'exec' || (approval.risk === 'write' && rel !== undefined)
+    const choices = rememberable ? ['Allow once', 'Always allow in this project', 'Deny'] : ['Allow once', 'Deny']
     const answer = await vscode.window.showWarningMessage(approval.summary, { modal: true, detail: note + detail }, ...choices)
     if (answer === 'Allow once') return { allowed: true }
     if (answer === 'Always allow in this project') return { allowed: true, always: 'project' }
@@ -152,11 +153,16 @@ export function activate(context: vscode.ExtensionContext) {
     const list = await converse(client, cwd, () => client.send({ type: 'memory', action: 'list' }), (m) => m.type === 'memory' || m.type === 'error')
     if (list?.type !== 'memory') return
     if (!list.entries.length) { void vscode.window.showInformationMessage('No project memory yet.'); return }
-    const pick = await vscode.window.showQuickPick(list.entries.map((e) => ({ label: e.text.slice(0, 100), description: e.status === 'pending' ? 'pending review' : e.kind, id: e.id, status: e.status })), { title: 'Project memory (pending items are not used until approved)' })
+    const pick = await vscode.window.showQuickPick(list.entries.map((e) => ({ label: e.text.replace(/\s+/g, ' ').slice(0, 100), description: e.status === 'pending' ? 'pending review' : e.kind, entry: e })), { title: 'Project memory (pending items are not used until approved)' })
     if (!pick) return
-    const actions = pick.status === 'pending' ? ['Approve', 'Forget'] : ['Forget']
-    const action = await vscode.window.showQuickPick(actions, { title: pick.label })
-    if (action) await converse(client, cwd, () => client.send({ type: 'memory', action: action === 'Approve' ? 'approve' : 'forget', id: pick.id }), (m) => m.type === 'memory' || m.type === 'error')
+    // Approving saves text that will be injected into future prompts, so the whole text is shown first.
+    const { entry } = pick
+    const MAX_SHOWN = 2000
+    const canApprove = entry.status === 'pending' && entry.text.length <= MAX_SHOWN
+    const note = entry.status === 'pending' && !canApprove ? `\n\n(Too long to review here: ${entry.text.length} characters. It can only be forgotten.)` : ''
+    const buttons = canApprove ? ['Approve', 'Forget'] : ['Forget']
+    const action = await vscode.window.showWarningMessage(entry.status === 'pending' ? 'Pending memory' : 'Project memory', { modal: true, detail: entry.text.slice(0, MAX_SHOWN) + note }, ...buttons)
+    if (action) await converse(client, cwd, () => client.send({ type: 'memory', action: action === 'Approve' ? 'approve' : 'forget', id: entry.id }), (m) => m.type === 'memory' || m.type === 'error')
   })
 
   register('oqelira.revert', async () => {
