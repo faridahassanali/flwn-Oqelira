@@ -7,7 +7,7 @@ import { spawnEngine } from '@oqelira/engine/client'
 import type { EngineClient } from '@oqelira/engine/client'
 import { readFileChange, applyFileChange } from '@oqelira/core'
 import type { Approval, EngineMessage } from '@oqelira/protocol'
-import { engineEnv, foundryEndpoint, proposedContent, secretName } from './policy.js'
+import { engineEnv, foundryEndpoint, proposedContent, rememberable, secretName } from './policy.js'
 import type { Setup } from './policy.js'
 
 /**
@@ -71,9 +71,8 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }
     const note = approval.risk === 'network' ? 'This sends the query to an external service.\n\n' : approval.risk === 'exec' ? 'This local shell command can access your computer.\n\n' : 'Review the proposed change.\n\n'
-    // Only offered where the engine can save a narrow rule: a command, or a write to a file. Never network or memory tools.
-    const rememberable = approval.risk === 'exec' || (approval.risk === 'write' && rel !== undefined)
-    const choices = rememberable ? ['Allow once', 'Always allow in this project', 'Deny'] : ['Allow once', 'Deny']
+    // Only offered for the tools the engine can save a narrow rule for (by name). Never network or memory tools.
+    const choices = rememberable(approval.tool) ? ['Allow once', 'Always allow in this project', 'Deny'] : ['Allow once', 'Deny']
     const answer = await vscode.window.showWarningMessage(approval.summary, { modal: true, detail: note + detail }, ...choices)
     if (answer === 'Allow once') return { allowed: true }
     if (answer === 'Always allow in this project') return { allowed: true, always: 'project' }

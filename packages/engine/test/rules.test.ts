@@ -156,6 +156,9 @@ test('writes without a file path (memory tools) are never remembered', () => {
   const save = { tool: 'save_memory', risk: 'write' as const, summary: 'save', input: { facts: ['x'] } }
   assert.equal(rules.add(save, 'project'), false)
   assert.ok(!rules.allows(save))
+  // A memory tool whose input happens to carry a `path` must not be treated as a file write, nor another tool's `command` as a command.
+  assert.equal(rules.add({ ...save, input: { facts: ['x'], path: 'src/a.ts' } }, 'project'), false)
+  assert.equal(rules.add({ tool: 'other_exec', risk: 'exec' as const, summary: 's', input: { command: 'ls' } }, 'project'), false)
 })
 
 test('network never persists; user scope refuses commands and writes; bad files mean no rules; files are private', () => {

@@ -41,3 +41,6 @@ export function proposedContent(tool: string, input: unknown, before: string | n
   }
   return undefined
 }
+
+/** Whether the engine can save a narrow rule for this tool; by tool name, matching the engine's own list. */
+export const rememberable = (tool: string): boolean => tool === 'run_command' || tool === 'write_file' || tool === 'edit_file' || tool === 'apply_file_change'

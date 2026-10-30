@@ -23,8 +23,12 @@ const COMMAND_FILES = ['package.json', 'makefile', 'justfile', 'taskfile.yml', '
 /** Names that decide what commands run, compared lowercase (macOS and Windows filesystems ignore case). */
 const definesCommands = (name: string) => COMMAND_FILES.includes(name.toLowerCase()) || /\.config\.[cm]?[jt]sx?$/i.test(name)
 
+/** Rememberable by tool identity, never by the shape of the input: only these tools have a file or command to bind a rule to. */
+const FILE_TOOLS = new Set(['write_file', 'edit_file', 'apply_file_change'])
+const COMMAND_TOOL = 'run_command'
+
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
-const commandOf = (req: ApprovalRequest) => (req.risk === 'exec' ? str((req.input as { command?: unknown } | null)?.command) : undefined)
+const commandOf = (req: ApprovalRequest) => (req.risk === 'exec' && req.tool === COMMAND_TOOL ? str((req.input as { command?: unknown } | null)?.command) : undefined)
 
 const SKIP_ROOT = new Set(['.git', '.oqelira', 'node_modules'])
 const MAX_FILES = 2000
@@ -164,6 +168,7 @@ export function openRules(cwd: string, stateRoot = path.join(os.homedir(), '.oqe
       return command === undefined || print === null ? null : { tool: req.tool, command, fingerprint: print }
     }
     if (req.risk === 'write') {
+      if (!FILE_TOOLS.has(req.tool)) return null
       const dir = writeDir(cwd, req)
       // A write with no path (save_memory...) has nothing narrow to bind a rule to: always asked.
       return dir === null || dir === undefined ? null : { tool: req.tool, dir }
