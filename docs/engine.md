@@ -73,7 +73,9 @@ extraction, so a failure retries next time.
 Order for a tool call: risks auto-allowed by flags (`--yes`, `--yolo`) -> saved always-allow rules -> the `decide` hook -> ask the user. No answer means denied.
 
 - Answering an approval with `always: "project" | "user"` (CLI: `p`) saves a rule in `~/.oqelira/projects/<hash>/permissions.json`, mode 0600. Network calls are never saved (a model-chosen query could carry data out), and user scope refuses commands and writes because what they do depends on each project's files; a hand-edited `~/.oqelira/permissions.json` is still read. A saved command still runs whatever the project's scripts now contain, so review rules after pulling untrusted changes. They are never read from the repository, so a cloned project cannot grant itself access.
-- A command rule matches that exact command only (no prefix matching, which `git status; rm -rf ~` would defeat). Other tools match by name. To revoke, edit the file.
+- A command rule matches that exact command only (no prefix matching, which `git status; rm -rf ~` would defeat) and is bound to a hash of the files that define what commands do (`package.json`, `Makefile`, `pyproject.toml`, `scripts/*`, ...). If any change, the rule stops matching and you are asked again. Not covered: a command that runs some other file (`node build.js`).
+- A write rule covers one directory (not its subdirectories) and never `.git`, `.github`, `.husky`, `.vscode`, `.oqelira`, `.env*`, `node_modules` or the command-defining files above; those always ask. Paths outside the project are never saved.
+- Network calls are never saved (a model-chosen query could carry data out). User scope refuses commands and writes; a hand-edited `~/.oqelira/permissions.json` is still read. To revoke, edit the file.
 - `decide` (`EngineOptions.decide`, `Permissions.decide`) is the auto-mode hook: return `allow` or `deny`, or nothing to fall through to the user. The Decision-1 classifier (issue #11) plugs in here.
 
 ## Terminal safety
