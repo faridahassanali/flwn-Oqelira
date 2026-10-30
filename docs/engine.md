@@ -94,7 +94,7 @@ extracted memory facts are cleaned at the source too. New interfaces must escape
 2. **Done - Host:** `packages/host` spawns `oqelira-engine` ([engine-client.ts](../packages/host/src/engine-client.ts))
    and bridges it to the browser. The browser API is unchanged; the host keeps only HTTP security,
    session ids and approval bookkeeping, and masks engine errors. One engine, one active run.
-3. **VS Code:** spawn the engine; keep native diff review and SecretStorage, pass the key via env.
+3. **VS Code (done):** the extension spawns the engine in VS Code's own runtime (`ELECTRON_RUN_AS_NODE`, Node 24 with `node:sqlite`), passes the key from SecretStorage via env, and keeps native diff review. Packaging the engine into the VSIX is still open (it currently finds the engine next to the extension, or via the user-scoped `oqelira.enginePath`).
 4. **Packaging:** the engine (not the CLI) is a dependency of the host and the extension (bundled in the VSIX).
    Decide how the extension finds a Node runtime with `node:sqlite` (memory degrades without it).
 5. **Cleanup:** delete the duplicated tool/rules/permission wiring in host and extension.

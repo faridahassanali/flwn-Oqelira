@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Headless Oqelira agent engine. No terminal UI: the web host and VS Code depend on this.",
-  "exports": { ".": "./src/index.ts", "./package.json": "./package.json" },
+  "exports": { ".": "./src/index.ts", "./client": "./src/client.ts", "./package.json": "./package.json" },
   "bin": { "oqelira-engine": "bin/oqelira-engine.mjs" },
   "scripts": {
     "start": "node bin/oqelira-engine.mjs",
