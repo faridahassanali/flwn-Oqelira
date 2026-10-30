@@ -37,6 +37,18 @@ test('a command rule stops matching when package.json, a Makefile or scripts/ ch
   assert.ok(!openRules(cwd, root).allows(run('npm test')), 'scripts/ changed')
 })
 
+test('command rules also re-ask when dotfiles, config files or nested scripts change', () => {
+  for (const [file, body] of [['.npmrc', 'x=1'], ['setup.py', 'x'], ['vitest.config.ts', 'x'], ['scripts/deep/run.sh', 'x']] as const) {
+    const root = tmp()
+    const cwd = tmp()
+    openRules(cwd, root).add(run('npm test'), 'project')
+    assert.ok(openRules(cwd, root).allows(run('npm test')))
+    fs.mkdirSync(path.dirname(path.join(cwd, file)), { recursive: true })
+    fs.writeFileSync(path.join(cwd, file), body)
+    assert.ok(!openRules(cwd, root).allows(run('npm test')), `${file} must invalidate`)
+  }
+})
+
 test('write rules cover one directory, not the tree, and never protected files', () => {
   const root = tmp()
   const cwd = tmp()
@@ -47,7 +59,7 @@ test('write rules cover one directory, not the tree, and never protected files',
   assert.ok(again.allows(write('./src/../src/c.ts')))
   assert.ok(!again.allows(write('src/deep/d.ts')), 'not recursive')
   assert.ok(!again.allows(write('other.ts')))
-  for (const p of ['package.json', 'src/package.json', '.git/hooks/pre-commit', '.github/workflows/x.yml', '.husky/pre-commit', '.vscode/tasks.json', '.env', '.env.local', 'Makefile', 'node_modules/x/index.js', '../outside.ts', '/etc/passwd']) {
+  for (const p of ['package.json', 'src/package.json', '.git/hooks/pre-commit', '.GIT/hooks/pre-commit', '.github/workflows/x.yml', '.husky/pre-commit', '.vscode/tasks.json', '.env', '.env.local', '.npmrc', '.cargo/config.toml', 'Makefile', 'MAKEFILE', 'Package.JSON', 'src/setup.py', 'src/conftest.py', 'vite.config.ts', 'Node_Modules/x.js', 'node_modules/x/index.js', '../outside.ts', '/etc/passwd']) {
     assert.equal(rules.add(write(p), 'project'), false, `${p} must not be savable`)
     assert.ok(!again.allows(write(p)), `${p} must always ask`)
   }

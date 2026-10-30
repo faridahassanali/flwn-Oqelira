@@ -14,13 +14,14 @@ import type { ApprovalRequest } from '@oqelira/core'
  *   change, the rule stops matching and the user is asked again. ponytail: a command that runs some other
  *   file (`node build.js`) is not covered; hash that file too if it matters.
  * - Writes match by directory (not recursive), and never cover files that can become code or config
- *   (.git, .github, .husky, .vscode, .oqelira, .env*, the command-defining files) - those always ask.
+ *   (any dot-file or dot-directory, node_modules, the command-defining files) - those always ask.
  * - Other tools (no path, no command) match by name. Network never persists (see add).
  */
 export interface Rule { tool: string; command?: string; fingerprint?: string; dir?: string }
 
-const COMMAND_FILES = ['package.json', 'Makefile', 'makefile', 'justfile', 'Taskfile.yml', 'pyproject.toml', 'tox.ini', 'Cargo.toml', 'go.mod', 'composer.json', 'build.gradle', 'pom.xml']
-const PROTECTED_DIRS = new Set(['.git', '.github', '.husky', '.vscode', '.oqelira', 'node_modules'])
+const COMMAND_FILES = ['package.json', 'makefile', 'justfile', 'taskfile.yml', 'pyproject.toml', 'setup.py', 'setup.cfg', 'tox.ini', 'conftest.py', 'cargo.toml', 'build.rs', 'go.mod', 'composer.json', 'build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts', 'pom.xml', 'rakefile', 'gemfile', 'cmakelists.txt']
+/** Names that decide what commands run, compared lowercase (macOS and Windows filesystems ignore case). */
+const definesCommands = (name: string) => COMMAND_FILES.includes(name.toLowerCase()) || /\.config\.[cm]?[jt]sx?$/i.test(name)
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
 const commandOf = (req: ApprovalRequest) => (req.risk === 'exec' ? str((req.input as { command?: unknown } | null)?.command) : undefined)
@@ -30,8 +31,19 @@ function fingerprint(cwd: string): string {
   const feed = (rel: string) => {
     try { hash.update(rel + '\0').update(fs.readFileSync(path.join(cwd, rel))) } catch { /* missing or unreadable */ }
   }
-  COMMAND_FILES.forEach(feed)
-  try { fs.readdirSync(path.join(cwd, 'scripts'), { withFileTypes: true }).filter((e) => e.isFile()).map((e) => `scripts/${e.name}`).sort().forEach(feed) } catch { /* no scripts dir */ }
+  const walk = (rel: string, depth: number): string[] => {
+    try {
+      return fs.readdirSync(path.join(cwd, rel), { withFileTypes: true }).sort((x, y) => x.name.localeCompare(y.name)).flatMap((e) => (e.isDirectory() ? (depth < 4 ? walk(path.join(rel, e.name), depth + 1) : []) : [path.join(rel, e.name)]))
+    } catch {
+      return [] // missing or unreadable
+    }
+  }
+  // Dotfiles at the root (.npmrc, .yarnrc, .pnpmfile.cjs, .cargo/config.toml...) change behaviour too; symlinks are read through.
+  let names: string[] = []
+  try { names = fs.readdirSync(cwd) } catch { /* unreadable */ }
+  const rootFiles = names.filter((n) => definesCommands(n) || n.startsWith('.')).filter((n) => n !== '.git' && n !== '.oqelira')
+  rootFiles.sort().forEach((n) => (fs.statSync(path.join(cwd, n), { throwIfNoEntry: false })?.isDirectory() ? walk(n, 1).forEach(feed) : feed(n)))
+  walk('scripts', 1).forEach(feed)
   return hash.digest('hex')
 }
 
@@ -52,10 +64,9 @@ function writeDir(cwd: string, req: ApprovalRequest): string | null | undefined 
   const lexical = path.relative(cwd, path.resolve(cwd, target))
   const rel = path.relative(realPath(cwd), realPath(path.resolve(cwd, target)))
   if (!rel || rel.startsWith('..') || path.isAbsolute(rel) || lexical.startsWith('..')) return null
-  const parts = [...rel.split(path.sep), ...lexical.split(path.sep)] // both the named path and where it really lands
-  const base = rel.split(path.sep).at(-1) ?? ''
-  if (/^\.env/.test(lexical.split(path.sep).at(-1) ?? '') || COMMAND_FILES.includes(lexical.split(path.sep).at(-1) ?? '')) return null
-  if (parts.some((p) => PROTECTED_DIRS.has(p)) || /^\.env/.test(base) || COMMAND_FILES.includes(base)) return null
+  // Both the named path and where it really lands. Any dot-segment (.git, .github, .env, .npmrc, .cargo...) is protected.
+  const parts = [...rel.split(path.sep), ...lexical.split(path.sep)].filter((p) => p && p !== '.')
+  if (parts.some((p) => p.startsWith('.') || p.toLowerCase() === 'node_modules' || definesCommands(p))) return null
   return path.dirname(rel)
 }
 
