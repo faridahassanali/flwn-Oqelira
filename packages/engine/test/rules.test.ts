@@ -75,8 +75,10 @@ test('symlinks cannot smuggle a write into a protected or outside location', () 
   fs.symlinkSync(outside, path.join(cwd, 'out'))
   fs.writeFileSync(path.join(cwd, 'package.json'), '{}')
   fs.symlinkSync(path.join(cwd, 'package.json'), path.join(cwd, 'src', 'link.json'))
+  fs.symlinkSync(path.join(cwd, '.git', 'hooks', 'pre-push'), path.join(cwd, 'dangling')) // target does not exist yet
+  fs.symlinkSync(path.join(cwd, '.git', 'nope', 'deep'), path.join(cwd, 'dangling2'))
   const rules = openRules(cwd, root)
-  for (const p of ['innocent/hooks/pre-commit', 'out/x.ts', 'src/link.json']) {
+  for (const p of ['innocent/hooks/pre-commit', 'out/x.ts', 'src/link.json', 'dangling', 'dangling2/x']) {
     assert.equal(rules.add(write(p), 'project'), false, `${p} must not be savable`)
     assert.ok(!rules.allows(write(p)))
   }

@@ -47,11 +47,13 @@ function fingerprint(cwd: string): string {
   return hash.digest('hex')
 }
 
-/** realpath of the deepest existing ancestor plus the missing tail, so symlinks cannot hide where a write lands. */
-function realPath(p: string): string {
+/** realpath of the deepest existing ancestor plus the missing tail, so symlinks cannot hide where a write lands; null for a dangling link. */
+function realPath(p: string): string | null {
   const tail: string[] = []
   for (let cur = p; ; cur = path.dirname(cur)) {
-    try { return path.join(fs.realpathSync(cur), ...tail) } catch { /* missing: try the parent */ }
+    try { return path.join(fs.realpathSync(cur), ...tail) } catch { /* missing, or a dangling link: checked below */ }
+    // An entry that exists but cannot be resolved is a dangling symlink; a write would create its target. Refuse.
+    if (fs.lstatSync(cur, { throwIfNoEntry: false })) return null
     if (path.dirname(cur) === cur) return p
     tail.unshift(path.basename(cur))
   }
@@ -62,7 +64,9 @@ function writeDir(cwd: string, req: ApprovalRequest): string | null | undefined 
   const target = str((req.input as { path?: unknown } | null)?.path)
   if (target === undefined) return undefined // not a file tool
   const lexical = path.relative(cwd, path.resolve(cwd, target))
-  const rel = path.relative(realPath(cwd), realPath(path.resolve(cwd, target)))
+  const [realCwd, realTarget] = [realPath(cwd), realPath(path.resolve(cwd, target))]
+  if (realCwd === null || realTarget === null) return null
+  const rel = path.relative(realCwd, realTarget)
   if (!rel || rel.startsWith('..') || path.isAbsolute(rel) || lexical.startsWith('..')) return null
   // Both the named path and where it really lands. Any dot-segment (.git, .github, .env, .npmrc, .cargo...) is protected.
   const parts = [...rel.split(path.sep), ...lexical.split(path.sep)].filter((p) => p && p !== '.')
