@@ -53,6 +53,27 @@ test('write rules cover one directory, not the tree, and never protected files',
   }
 })
 
+test('symlinks cannot smuggle a write into a protected or outside location', () => {
+  const root = tmp()
+  const cwd = tmp()
+  const outside = tmp()
+  fs.mkdirSync(path.join(cwd, '.git', 'hooks'), { recursive: true })
+  fs.mkdirSync(path.join(cwd, 'src'))
+  fs.symlinkSync(path.join(cwd, '.git'), path.join(cwd, 'innocent'))
+  fs.symlinkSync(outside, path.join(cwd, 'out'))
+  fs.writeFileSync(path.join(cwd, 'package.json'), '{}')
+  fs.symlinkSync(path.join(cwd, 'package.json'), path.join(cwd, 'src', 'link.json'))
+  const rules = openRules(cwd, root)
+  for (const p of ['innocent/hooks/pre-commit', 'out/x.ts', 'src/link.json']) {
+    assert.equal(rules.add(write(p), 'project'), false, `${p} must not be savable`)
+    assert.ok(!rules.allows(write(p)))
+  }
+  assert.ok(rules.add(write('src/ok.ts'), 'project'))
+  fs.rmSync(path.join(cwd, 'src'), { recursive: true })
+  fs.symlinkSync(path.join(cwd, '.git'), path.join(cwd, 'src')) // directory swapped for a link after approval
+  assert.ok(!openRules(cwd, root).allows(write('src/ok.ts')))
+})
+
 test('a hand-written rule still cannot cover a protected file', () => {
   const root = tmp()
   const cwd = tmp()

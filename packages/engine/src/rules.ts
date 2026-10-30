@@ -35,14 +35,26 @@ function fingerprint(cwd: string): string {
   return hash.digest('hex')
 }
 
+/** realpath of the deepest existing ancestor plus the missing tail, so symlinks cannot hide where a write lands. */
+function realPath(p: string): string {
+  const tail: string[] = []
+  for (let cur = p; ; cur = path.dirname(cur)) {
+    try { return path.join(fs.realpathSync(cur), ...tail) } catch { /* missing: try the parent */ }
+    if (path.dirname(cur) === cur) return p
+    tail.unshift(path.basename(cur))
+  }
+}
+
 /** Directory (relative to cwd) of the file a write targets; undefined if there is no path, it escapes cwd, or it is protected. */
 function writeDir(cwd: string, req: ApprovalRequest): string | null | undefined {
   const target = str((req.input as { path?: unknown } | null)?.path)
   if (target === undefined) return undefined // not a file tool
-  const rel = path.relative(cwd, path.resolve(cwd, target))
-  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return null
-  const parts = rel.split(path.sep)
-  const base = parts.at(-1) ?? ''
+  const lexical = path.relative(cwd, path.resolve(cwd, target))
+  const rel = path.relative(realPath(cwd), realPath(path.resolve(cwd, target)))
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel) || lexical.startsWith('..')) return null
+  const parts = [...rel.split(path.sep), ...lexical.split(path.sep)] // both the named path and where it really lands
+  const base = rel.split(path.sep).at(-1) ?? ''
+  if (/^\.env/.test(lexical.split(path.sep).at(-1) ?? '') || COMMAND_FILES.includes(lexical.split(path.sep).at(-1) ?? '')) return null
   if (parts.some((p) => PROTECTED_DIRS.has(p)) || /^\.env/.test(base) || COMMAND_FILES.includes(base)) return null
   return path.dirname(rel)
 }
