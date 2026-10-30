@@ -28,6 +28,7 @@ const commandOf = (req: ApprovalRequest) => (req.risk === 'exec' ? str((req.inpu
 
 const SKIP_ROOT = new Set(['.git', '.oqelira', 'node_modules'])
 const MAX_FILES = 2000
+const MAX_FILE = 8_000_000
 
 /**
  * Hash of what decides what commands do: every file directly in the project root (so a new or renamed build file
@@ -50,10 +51,11 @@ function fingerprint(cwd: string): string | null {
         return true
       }
       if (++count > MAX_FILES || rel.split(path.sep).length > 6) return false // past the cap: do not pretend we looked
-      hash.update(rel + '\0' + st.size + '\0').update(fs.readFileSync(full).subarray(0, 1_000_000))
+      if (st.size > MAX_FILE) return false // too big to hash fully
+      hash.update(rel + '\0' + st.size + '\0').update(fs.readFileSync(full))
       return true
-    } catch {
-      return true // a dangling link or vanished file contributes only its name
+    } catch (e) {
+      return (e as NodeJS.ErrnoException).code === 'ENOENT' // a dangling link or vanished file contributes only its name; anything else (permissions...) fails closed
     }
   }
   const feedChild = (rel: string) => { hash.update(rel + '\0'); return feed(rel) }
@@ -62,7 +64,7 @@ function fingerprint(cwd: string): string | null {
   for (const n of names) {
     if (SKIP_ROOT.has(n)) continue
     const isDir = fs.statSync(path.join(cwd, n), { throwIfNoEntry: false })?.isDirectory()
-    if (isDir && n !== 'scripts' && !n.startsWith('.')) continue // source directories are not build definitions
+    if (isDir && n.toLowerCase() !== 'scripts' && !n.startsWith('.')) continue // source directories are not build definitions
     if (!feedChild(n)) return null
   }
   return hash.digest('hex')
@@ -92,6 +94,7 @@ function writeDir(cwd: string, req: ApprovalRequest): string | null | undefined 
   // Both the named path and where it really lands. Any dot-segment (.git, .github, .env, .npmrc, .cargo...) is protected.
   const parts = [...rel.split(path.sep), ...lexical.split(path.sep)].filter((p) => p && p !== '.')
   if (parts.some((p) => p.startsWith('.') || p.toLowerCase() === 'node_modules' || definesCommands(p))) return null
+  if (parts[0]?.toLowerCase() === 'scripts') return null // fingerprinted: edits there already invalidate command rules, and writes ask
   const dir = path.dirname(rel)
   return dir === '.' ? null : dir // the project root holds the build files; never covered
 }

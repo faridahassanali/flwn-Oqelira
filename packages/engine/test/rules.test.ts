@@ -80,7 +80,7 @@ test('write rules cover one directory, not the tree, and never protected files',
   assert.ok(!again.allows(write('src/deep/d.ts')), 'not recursive')
   assert.ok(!again.allows(write('other.ts')))
   assert.ok(!again.allows(write('top.ts')))
-  for (const p of ['package.json', 'src/package.json', '.git/hooks/pre-commit', '.GIT/hooks/pre-commit', '.github/workflows/x.yml', '.husky/pre-commit', '.vscode/tasks.json', '.env', '.env.local', '.npmrc', '.cargo/config.toml', 'Makefile', 'MAKEFILE', 'Package.JSON', 'src/setup.py', 'src/conftest.py', 'vite.config.ts', 'Node_Modules/x.js', 'node_modules/x/index.js', '../outside.ts', '/etc/passwd']) {
+  for (const p of ['package.json', 'src/package.json', '.git/hooks/pre-commit', '.GIT/hooks/pre-commit', '.github/workflows/x.yml', '.husky/pre-commit', '.vscode/tasks.json', '.env', '.env.local', '.npmrc', '.cargo/config.toml', 'Makefile', 'MAKEFILE', 'Package.JSON', 'src/setup.py', 'scripts/x.sh', 'Scripts/x.sh', 'src/conftest.py', 'vite.config.ts', 'Node_Modules/x.js', 'node_modules/x/index.js', '../outside.ts', '/etc/passwd']) {
     assert.equal(rules.add(write(p), 'project'), false, `${p} must not be savable`)
     assert.ok(!again.allows(write(p)), `${p} must always ask`)
   }
