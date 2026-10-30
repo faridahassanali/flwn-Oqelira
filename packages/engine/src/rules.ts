@@ -81,10 +81,14 @@ function fingerprint(cwd: string, command: string): string | null {
   // hashed (`eslint src` would then go stale on every edit); imports of a named file are not followed.
   let realCwd: string
   try { realCwd = fs.realpathSync(cwd) } catch { return null }
-  for (const token of new Set(command.split(/[\s;&|<>()$`'"=]+/))) {
-    if (!token) continue
+  // Globs, tildes, braces, escapes and directory changes make "which files does this run" unknowable here: never saved.
+  if (/[*?[\]{}~\\\n\r]/.test(command)) return null
+  const tokens = [...new Set(command.split(/[\s;&|<>()$`'"=]+/))].filter(Boolean)
+  if (tokens.some((t) => t === 'cd' || t === 'pushd')) return null
+  for (const token of tokens) {
     let real: string
-    try { real = fs.realpathSync(path.resolve(cwd, token)) } catch { continue } // not a file here
+    // A name that is not a file today is recorded as missing, so creating it later changes the fingerprint.
+    try { real = fs.realpathSync(path.resolve(cwd, token)) } catch { hash.update('missing\0' + token + '\0'); continue }
     const rel = path.relative(realCwd, real)
     if (!rel || rel.startsWith('..') || path.isAbsolute(rel) || !fs.statSync(real).isFile()) continue
     if (!feedChild(path.relative(cwd, path.resolve(cwd, token)))) return null

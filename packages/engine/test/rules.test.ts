@@ -68,6 +68,16 @@ test('a command rule is bound to the files the command names, and big root files
   assert.ok(!openRules(cwd, root).allows(run('eslint src')))
 })
 
+test('commands whose files are unknowable are never saved, and a file created later invalidates the rule', () => {
+  const root = tmp()
+  const cwd = tmp()
+  for (const c of ['node src/*.js', 'sh ./a?.sh', 'cd sub && ./run.sh', 'echo ~/x', 'node {a,b}.js', 'sh run\\.sh', 'pushd sub; ls']) assert.equal(openRules(cwd, root).add(run(c), 'project'), false, c)
+  assert.ok(openRules(cwd, root).add(run('node ./gen.js'), 'project'))
+  assert.ok(openRules(cwd, root).allows(run('node ./gen.js')))
+  fs.writeFileSync(path.join(cwd, 'gen.js'), 'evil')
+  assert.ok(!openRules(cwd, root).allows(run('node ./gen.js')), 'the named file now exists')
+})
+
 test('fingerprint follows symlinked directories and fails closed past its limits', () => {
   const root = tmp()
   const cwd = tmp()
