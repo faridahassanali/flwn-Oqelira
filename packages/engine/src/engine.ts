@@ -60,8 +60,8 @@ export interface Engine {
   setModel(id: string): ModelConfig
   /** Summary line the interfaces show for a tool call. */
   describe(name: string, input: unknown): string
-  /** Remember an approved request so it is never asked again (commands: this exact command only). */
-  allowAlways(req: ApprovalRequest, scope: 'project' | 'user'): void
+  /** Remember an approved request so it is never asked again (commands: this exact command only). False if refused: network never persists, commands and writes are project-scoped. */
+  allowAlways(req: ApprovalRequest, scope: 'project' | 'user'): boolean
   history(sessionId?: string): Promise<Message[]>
   sessions(): SessionInfo[]
   /** Mines the session's new messages for durable facts and saves them. Returns what was saved. */

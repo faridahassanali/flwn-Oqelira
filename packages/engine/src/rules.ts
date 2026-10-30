@@ -36,13 +36,16 @@ export function openRules(cwd: string, stateRoot = path.join(os.homedir(), '.oqe
       if (req.risk === 'exec' && command === undefined) return false
       return [...saved.user, ...saved.project].some((r) => r.tool === req.tool && r.command === command)
     },
-    add(req: ApprovalRequest, scope: 'user' | 'project'): void {
+    /** False when refused: network never persists (a model-chosen query is an exfiltration channel), and commands and writes depend on each project's files, so they stay project-scoped. */
+    add(req: ApprovalRequest, scope: 'user' | 'project'): boolean {
       const command = commandOf(req)
-      if (req.risk === 'exec' && command === undefined) return
-      if (saved[scope].some((r) => r.tool === req.tool && r.command === command)) return
+      if (req.risk === 'network' || (scope === 'user' && req.risk !== 'read')) return false
+      if (req.risk === 'exec' && command === undefined) return false
+      if (saved[scope].some((r) => r.tool === req.tool && r.command === command)) return true
       saved[scope].push(command === undefined ? { tool: req.tool } : { tool: req.tool, command })
       fs.mkdirSync(path.dirname(files[scope]), { recursive: true, mode: 0o700 })
       fs.writeFileSync(files[scope], JSON.stringify({ allow: saved[scope] }, null, 2) + '\n', { mode: 0o600 })
+      return true
     },
   }
 }
