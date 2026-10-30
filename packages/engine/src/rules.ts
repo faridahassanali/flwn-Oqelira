@@ -81,10 +81,10 @@ function fingerprint(cwd: string, command: string): string | null {
   // hashed (`eslint src` would then go stale on every edit); imports of a named file are not followed.
   let realCwd: string
   try { realCwd = fs.realpathSync(cwd) } catch { return null }
-  // Globs, tildes, braces, escapes and directory changes make "which files does this run" unknowable here: never saved.
-  if (/[*?[\]{}~\\\n\r]/.test(command)) return null
-  const tokens = [...new Set(command.split(/[\s;&|<>()$`'"=]+/))].filter(Boolean)
-  if (tokens.some((t) => t === 'cd' || t === 'pushd')) return null
+  // Only plain words joined by && || ; | are saved. Quotes, substitutions, globs, redirects, escapes and the like make
+  // "which files does this run" unknowable here, so those commands are asked every time.
+  const tokens = plainCommandWords(command)
+  if (!tokens) return null
   for (const token of tokens) {
     let real: string
     // A name that is not a file today is recorded as missing, so creating it later changes the fingerprint.
@@ -94,6 +94,23 @@ function fingerprint(cwd: string, command: string): string | null {
     if (!feedChild(path.relative(cwd, path.resolve(cwd, token)))) return null
   }
   return hash.digest('hex')
+}
+
+const WORD = /^[\w./:@%+,=-]+$/
+const OPERATORS = /\s*(?:&&|\|\||;|\|)\s*/
+const REDIRECTS_OR_WORKDIR = new Set(['cd', 'pushd', 'popd', 'eval', 'source', '.', 'exec', 'env', 'xargs', 'command', 'builtin', '-C', '-m', '-r', '--prefix', '--cwd', '--dir', '--directory', '--chdir', '--project', '--manifest-path', '--require', '--import', '--workspace', '--filter'])
+
+/** The words of a command made only of plain words and && || ; |, or null if it is anything else. */
+function plainCommandWords(command: string): string[] | null {
+  const words: string[] = []
+  for (const part of command.trim().split(OPERATORS)) {
+    if (!part) return null
+    for (const word of part.split(/\s+/)) {
+      if (!WORD.test(word) || REDIRECTS_OR_WORKDIR.has(word.split('=')[0] ?? '')) return null
+      words.push(word)
+    }
+  }
+  return [...new Set(words)]
 }
 
 /** realpath of the deepest existing ancestor plus the missing tail, so symlinks cannot hide where a write lands; null for a dangling link. */

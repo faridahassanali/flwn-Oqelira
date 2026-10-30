@@ -71,8 +71,9 @@ test('a command rule is bound to the files the command names, and big root files
 test('commands whose files are unknowable are never saved, and a file created later invalidates the rule', () => {
   const root = tmp()
   const cwd = tmp()
-  for (const c of ['node src/*.js', 'sh ./a?.sh', 'cd sub && ./run.sh', 'echo ~/x', 'node {a,b}.js', 'sh run\\.sh', 'pushd sub; ls']) assert.equal(openRules(cwd, root).add(run(c), 'project'), false, c)
+  for (const c of ['echo $HOME', 'echo `id`', 'echo "x"', "echo 'x'", 'cat a > b', 'sleep 1 &', 'eval ls', 'make -C sub', 'make --directory=sub', 'npm --prefix sub test', 'python -m pkg', '. ./env.sh', 'env FOO=1 ls', 'ls &&', 'node src/*.js', 'sh ./a?.sh', 'cd sub && ./run.sh', 'echo ~/x', 'node {a,b}.js', 'sh run\\.sh', 'pushd sub; ls']) assert.equal(openRules(cwd, root).add(run(c), 'project'), false, c)
   assert.ok(openRules(cwd, root).add(run('node ./gen.js'), 'project'))
+  assert.ok(openRules(cwd, root).add(run('npm run build && git status --short | head'), 'project'))
   assert.ok(openRules(cwd, root).allows(run('node ./gen.js')))
   fs.writeFileSync(path.join(cwd, 'gen.js'), 'evil')
   assert.ok(!openRules(cwd, root).allows(run('node ./gen.js')), 'the named file now exists')
