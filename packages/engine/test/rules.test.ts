@@ -38,7 +38,7 @@ test('a command rule stops matching when package.json, a Makefile or scripts/ ch
 })
 
 test('command rules also re-ask when dotfiles, config files or nested scripts change', () => {
-  for (const [file, body] of [['.npmrc', 'x=1'], ['setup.py', 'x'], ['vitest.config.ts', 'x'], ['scripts/deep/run.sh', 'x']] as const) {
+  for (const [file, body] of [['GNUmakefile', 'x'], ['noxfile.py', 'x'], ['.npmrc', 'x=1'], ['setup.py', 'x'], ['vitest.config.ts', 'x'], ['scripts/deep/run.sh', 'x'], ['.cargo/config.toml', 'x']] as const) {
     const root = tmp()
     const cwd = tmp()
     openRules(cwd, root).add(run('npm test'), 'project')
@@ -49,16 +49,37 @@ test('command rules also re-ask when dotfiles, config files or nested scripts ch
   }
 })
 
+test('fingerprint follows symlinked directories and fails closed past its limits', () => {
+  const root = tmp()
+  const cwd = tmp()
+  const elsewhere = tmp()
+  fs.writeFileSync(path.join(elsewhere, 'run.sh'), 'a')
+  fs.symlinkSync(elsewhere, path.join(cwd, 'scripts'))
+  openRules(cwd, root).add(run('x'), 'project')
+  assert.ok(openRules(cwd, root).allows(run('x')))
+  fs.writeFileSync(path.join(elsewhere, 'run.sh'), 'b')
+  assert.ok(!openRules(cwd, root).allows(run('x')), 'edit behind a symlinked scripts/ invalidates')
+  fs.symlinkSync(cwd, path.join(elsewhere, 'loop')) // cycle must terminate
+  openRules(cwd, root).add(run('y'), 'project')
+  const deep = path.join(cwd, 'scripts', ...Array(8).fill('d'))
+  fs.mkdirSync(deep, { recursive: true })
+  fs.writeFileSync(path.join(deep, 'f.sh'), 'z')
+  assert.equal(openRules(cwd, root).add(run('y'), 'project'), false, 'too deep to fingerprint: refuse')
+  assert.ok(!openRules(cwd, root).allows(run('y')))
+})
+
 test('write rules cover one directory, not the tree, and never protected files', () => {
   const root = tmp()
   const cwd = tmp()
   const rules = openRules(cwd, root)
+  assert.equal(rules.add(write('top.ts'), 'project'), false, 'the project root is never covered')
   assert.ok(rules.add(write('src/a.ts'), 'project'))
   const again = openRules(cwd, root)
   assert.ok(again.allows(write('src/b.ts')))
   assert.ok(again.allows(write('./src/../src/c.ts')))
   assert.ok(!again.allows(write('src/deep/d.ts')), 'not recursive')
   assert.ok(!again.allows(write('other.ts')))
+  assert.ok(!again.allows(write('top.ts')))
   for (const p of ['package.json', 'src/package.json', '.git/hooks/pre-commit', '.GIT/hooks/pre-commit', '.github/workflows/x.yml', '.husky/pre-commit', '.vscode/tasks.json', '.env', '.env.local', '.npmrc', '.cargo/config.toml', 'Makefile', 'MAKEFILE', 'Package.JSON', 'src/setup.py', 'src/conftest.py', 'vite.config.ts', 'Node_Modules/x.js', 'node_modules/x/index.js', '../outside.ts', '/etc/passwd']) {
     assert.equal(rules.add(write(p), 'project'), false, `${p} must not be savable`)
     assert.ok(!again.allows(write(p)), `${p} must always ask`)
@@ -93,11 +114,11 @@ test('a hand-written rule still cannot cover a protected file', () => {
   const cwd = tmp()
   const rules = openRules(cwd, root)
   fs.mkdirSync(path.dirname(rules.files.project), { recursive: true })
-  fs.writeFileSync(rules.files.project, JSON.stringify({ allow: [{ tool: 'write_file', dir: '.' }] }))
-  assert.ok(openRules(cwd, root).allows(write('a.ts')))
-  assert.ok(!openRules(cwd, root).allows(write('package.json')), 'root rule, protected file')
+  fs.writeFileSync(rules.files.project, JSON.stringify({ allow: [{ tool: 'write_file', dir: 'src' }] }))
+  assert.ok(openRules(cwd, root).allows(write('src/a.ts')))
+  assert.ok(!openRules(cwd, root).allows(write('src/package.json')), 'protected file in a covered dir')
   fs.writeFileSync(rules.files.project, JSON.stringify({ allow: [{ tool: 'write_file' }] }))
-  assert.ok(!openRules(cwd, root).allows(write('a.ts')), 'a tool-wide write rule does not cover file writes')
+  assert.ok(!openRules(cwd, root).allows(write('src/a.ts')), 'a tool-wide write rule does not cover file writes')
 })
 
 test('network never persists; user scope refuses commands and writes; bad files mean no rules; files are private', () => {
@@ -107,11 +128,11 @@ test('network never persists; user scope refuses commands and writes; bad files 
   const search = { tool: 'web_search', risk: 'network' as const, summary: 'search', input: { query: 'x' } }
   assert.equal(rules.add(search, 'project'), false)
   assert.equal(rules.add(run('ls'), 'user'), false)
-  assert.equal(rules.add(write('a.ts'), 'user'), false)
+  assert.equal(rules.add(write('src/a.ts'), 'user'), false)
   assert.equal(rules.add(run(undefined), 'project'), false)
   assert.ok(!rules.allows(search) && !fs.existsSync(rules.files.user))
-  rules.add(write('a.ts'), 'project')
+  rules.add(write('src/a.ts'), 'project')
   assert.equal(fs.statSync(rules.files.project).mode & 0o077, 0)
   fs.writeFileSync(rules.files.project, '{not json')
-  assert.ok(!openRules(cwd, root).allows(write('a.ts')))
+  assert.ok(!openRules(cwd, root).allows(write('src/a.ts')))
 })

@@ -74,7 +74,7 @@ test('serve: a write waits for approval over the protocol, then runs', async () 
 })
 
 test('serve: "always" saves a rule so the same write is never asked again, even after a restart', async () => {
-  const script = (body: any): Reply => body.messages.at(-1).role === 'tool' ? { text: 'ok' } : { toolCall: { name: 'write_file', args: { path: 'out.txt', content: 'hello' } } }
+  const script = (body: any): Reply => body.messages.at(-1).role === 'tool' ? { text: 'ok' } : { toolCall: { name: 'write_file', args: { path: 'sub/out.txt', content: 'hello' } } }
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'oqelira-serve-'))
   const mock = await startMock({ script })
   try {

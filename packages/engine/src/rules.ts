@@ -26,24 +26,45 @@ const definesCommands = (name: string) => COMMAND_FILES.includes(name.toLowerCas
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
 const commandOf = (req: ApprovalRequest) => (req.risk === 'exec' ? str((req.input as { command?: unknown } | null)?.command) : undefined)
 
-function fingerprint(cwd: string): string {
+const SKIP_ROOT = new Set(['.git', '.oqelira', 'node_modules'])
+const MAX_FILES = 2000
+
+/**
+ * Hash of what decides what commands do: every file directly in the project root (so a new or renamed build file
+ * cannot slip past a name list), root dot-directories (.cargo...) and scripts/, recursively, following symlinks.
+ * null when it cannot be computed with confidence (too deep, too many files, unreadable): then no rule matches.
+ */
+function fingerprint(cwd: string): string | null {
   const hash = crypto.createHash('sha256')
-  const feed = (rel: string) => {
-    try { hash.update(rel + '\0').update(fs.readFileSync(path.join(cwd, rel))) } catch { /* missing or unreadable */ }
-  }
-  const walk = (rel: string, depth: number): string[] => {
+  const seen = new Set<string>()
+  let count = 0
+  const feed = (rel: string): boolean => {
     try {
-      return fs.readdirSync(path.join(cwd, rel), { withFileTypes: true }).sort((x, y) => x.name.localeCompare(y.name)).flatMap((e) => (e.isDirectory() ? (depth < 4 ? walk(path.join(rel, e.name), depth + 1) : []) : [path.join(rel, e.name)]))
+      const full = path.join(cwd, rel)
+      const real = fs.realpathSync(full)
+      const st = fs.statSync(full)
+      if (st.isDirectory()) {
+        if (seen.has(real)) return true // loop
+        seen.add(real)
+        for (const e of fs.readdirSync(full).sort()) if (!feedChild(path.join(rel, e))) return false
+        return true
+      }
+      if (++count > MAX_FILES || rel.split(path.sep).length > 6) return false // past the cap: do not pretend we looked
+      hash.update(rel + '\0' + st.size + '\0').update(fs.readFileSync(full).subarray(0, 1_000_000))
+      return true
     } catch {
-      return [] // missing or unreadable
+      return true // a dangling link or vanished file contributes only its name
     }
   }
-  // Dotfiles at the root (.npmrc, .yarnrc, .pnpmfile.cjs, .cargo/config.toml...) change behaviour too; symlinks are read through.
-  let names: string[] = []
-  try { names = fs.readdirSync(cwd) } catch { /* unreadable */ }
-  const rootFiles = names.filter((n) => definesCommands(n) || n.startsWith('.')).filter((n) => n !== '.git' && n !== '.oqelira')
-  rootFiles.sort().forEach((n) => (fs.statSync(path.join(cwd, n), { throwIfNoEntry: false })?.isDirectory() ? walk(n, 1).forEach(feed) : feed(n)))
-  walk('scripts', 1).forEach(feed)
+  const feedChild = (rel: string) => { hash.update(rel + '\0'); return feed(rel) }
+  let names: string[]
+  try { names = fs.readdirSync(cwd).sort() } catch { return null }
+  for (const n of names) {
+    if (SKIP_ROOT.has(n)) continue
+    const isDir = fs.statSync(path.join(cwd, n), { throwIfNoEntry: false })?.isDirectory()
+    if (isDir && n !== 'scripts' && !n.startsWith('.')) continue // source directories are not build definitions
+    if (!feedChild(n)) return null
+  }
   return hash.digest('hex')
 }
 
@@ -71,7 +92,8 @@ function writeDir(cwd: string, req: ApprovalRequest): string | null | undefined 
   // Both the named path and where it really lands. Any dot-segment (.git, .github, .env, .npmrc, .cargo...) is protected.
   const parts = [...rel.split(path.sep), ...lexical.split(path.sep)].filter((p) => p && p !== '.')
   if (parts.some((p) => p.startsWith('.') || p.toLowerCase() === 'node_modules' || definesCommands(p))) return null
-  return path.dirname(rel)
+  const dir = path.dirname(rel)
+  return dir === '.' ? null : dir // the project root holds the build files; never covered
 }
 
 export function openRules(cwd: string, stateRoot = path.join(os.homedir(), '.oqelira')) {
@@ -92,7 +114,8 @@ export function openRules(cwd: string, stateRoot = path.join(os.homedir(), '.oqe
     if (req.risk === 'network') return null
     if (req.risk === 'exec') {
       const command = commandOf(req)
-      return command === undefined ? null : { tool: req.tool, command, fingerprint: fingerprint(cwd) }
+      const print = fingerprint(cwd)
+      return command === undefined || print === null ? null : { tool: req.tool, command, fingerprint: print }
     }
     if (req.risk === 'write') {
       const dir = writeDir(cwd, req)
