@@ -7,8 +7,8 @@ exports.run=async function(){
  assert.ok(extension,'extension registered')
  await extension.activate()
  const commands=await vscode.commands.getCommands(true)
- for(const command of ['oqelira.ask','oqelira.stop','oqelira.configure','oqelira.clear','oqelira.revert'])assert.ok(commands.includes(command),command)
+ for(const command of ['oqelira.ask','oqelira.stop','oqelira.configure','oqelira.clear','oqelira.revert','oqelira.memory'])assert.ok(commands.includes(command),command)
  await vscode.commands.executeCommand('oqelira.stop')
  await vscode.commands.executeCommand('oqelira.clear')
- fs.writeFileSync(path.resolve(__dirname,'../../../work/vscode-smoke-result.json'),JSON.stringify({activated:true,commands:5,stop:true,clear:true}))
+ fs.writeFileSync(path.resolve(__dirname,'../../../work/vscode-smoke-result.json'),JSON.stringify({activated:true,commands:6,stop:true,clear:true}))
 }

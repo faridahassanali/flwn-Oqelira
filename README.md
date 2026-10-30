@@ -16,25 +16,28 @@ See [server setup, capabilities and limits](docs/server.md) and the
 existing Vercel AI SDK provider; `npm run foundry:check` checks the real connection.
 The local mode below remains a separate development option without cloud accounts.
 
-## Web and Desktop
+## Desktop
+
+The local app is the Electron desktop app. There is no browser mode.
 
     npm install
-    npm run web          # build and serve connected UI at http://127.0.0.1:4317
-    npm run build        # production web bundle
     npm run desktop      # build shared renderer and launch Electron
+    npm run build        # production web bundle
+
     npm run typecheck    # all TypeScript workspaces
 
 `packages/ui` owns the shared responsive workspace, pastel theme, conversation,
 tool activity, tasks and context/files panels. `packages/web` bundles it with Vite;
-`packages/host` serves that bundle and runs the existing core on loopback only.
-Electron starts its own host on a free port and loads the same renderer with
-sandboxing and context isolation enabled and Node integration disabled.
+`packages/host` is the desktop app's internal host: it serves that bundle on loopback and
+bridges the window to the headless engine (`@oqelira/engine`). Electron starts it on a free
+port with a per-launch secret that the host requires on every request, so a browser tab cannot
+use it, and loads the renderer with sandboxing and context isolation enabled and Node integration disabled.
 
-Configure `FOUNDRY_KEY` and `FOUNDRY_ENDPOINT` in the root `.env` before starting.
+Configure `FOUNDRY_KEY` and `FOUNDRY_ENDPOINT` in `~/.oqelira/.env` (or the environment) before starting. A project's own `.env` cannot set them; to use one deliberately, pass `--env-file .env`.
 Provider keys stay in the host. The UI selects models from the host registry;
 override it with `OQELIRA_MODELS_JSON` (see `.env.example`).
 Set `OQELIRA_WORKSPACE` to choose a project; it is fixed for the life of the host.
-The default workspace is this repository. `OQELIRA_PORT` overrides the browser port.
+The default workspace is this repository.
 
 Chat replies and tool calls stream from core. Reads run automatically; each write,
 edit or shell command requires an explicit Allow once / Deny decision in the UI.
@@ -69,7 +72,8 @@ remain deferred; future Flwn integrations must use one gateway.
 
     npm install            # at the repo root (npm workspaces)
     npm test               # core, CLI and host tests; local mock servers only
-    copy .env.example .env # at the repo root; fill FOUNDRY_ENDPOINT / FOUNDRY_KEY (never commit .env)
+    copy .env.example .env # at the repo root: used by `npm run live` and the desktop app (never commit .env)
+    # for the CLI/engine, put the same settings in ~/.oqelira/.env; a project's own .env cannot set keys
     npm run live           # real Foundry: streaming + tools, permissions, edit + run
 
 ## Use the CLI

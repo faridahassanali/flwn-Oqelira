@@ -1,0 +1,4 @@
+import { createFoundryEmbedder, foundryConfigFromEnv } from '/Users/anas/Projects/flwn/flwn-Oqelira/packages/core/src/index.ts'
+const e = createFoundryEmbedder(foundryConfigFromEnv())('embed-v-4-0')
+const v = await e.embed(['postgres with pgvector', 'cats are mammals'])
+console.log('vectors', v.length, 'dim', v[0]?.length)

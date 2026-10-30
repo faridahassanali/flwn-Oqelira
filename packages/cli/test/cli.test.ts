@@ -16,6 +16,7 @@ async function workspace<T>(fn: (cwd: string) => Promise<T>): Promise<T> {
     return await fn(cwd)
   } finally {
     await fs.rm(cwd, { recursive: true, force: true })
+    await fs.rm(`${cwd}-home`, { recursive: true, force: true })
   }
 }
 
@@ -24,7 +25,8 @@ function runCli(
   opts: { cwd: string; baseURL?: string; stdin?: string; env?: Record<string, string> },
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const env: NodeJS.ProcessEnv = { ...process.env, OQELIRA_NO_ENV_FILES: '1', NO_COLOR: '1', ...opts.env }
+    // Sessions and memory live under OQELIRA_HOME; keep every test out of the real home directory.
+    const env: NodeJS.ProcessEnv = { ...process.env, OQELIRA_NO_ENV_FILES: '1', NO_COLOR: '1', OQELIRA_HOME: `${opts.cwd}-home`, ...opts.env }
     for (const k of ['FOUNDRY_KEY', 'FOUNDRY_ENDPOINT', 'FOUNDRY_BASE_URL']) delete env[k]
     if (opts.baseURL) {
       env.FOUNDRY_BASE_URL = opts.baseURL
@@ -225,12 +227,13 @@ test('interactive session restores local history and /clear removes it', async (
     const mock = await startMock({ script: (_b, n) => ({ text: `answer ${n}` }) })
     try {
       await runCli(M, { cwd, baseURL: mock.baseURL, stdin: 'first question\n/exit\n' })
-      const history = path.join(cwd, '.oqelira', 'cli-history.json')
-      assert.match(await fs.readFile(history, 'utf8'), /first question/)
-      await runCli(M, { cwd, baseURL: mock.baseURL, stdin: 'second question\n/clear\n/exit\n' })
+      await assert.rejects(fs.access(path.join(cwd, '.oqelira'))) // nothing is written into the project
+      const second = await runCli(M, { cwd, baseURL: mock.baseURL, stdin: 'second question\n/clear\n/exit\n' })
+      assert.match(second.stdout, /restored 2 local history messages/)
       const users = mock.requests.at(-1)?.body.messages.filter((m: any) => m.role === 'user').map((m: any) => m.content)
       assert.deepEqual(users, ['first question', 'second question'])
-      await assert.rejects(fs.access(history))
+      const third = await runCli(M, { cwd, baseURL: mock.baseURL, stdin: '/exit\n' })
+      assert.doesNotMatch(third.stdout, /restored/) // /clear removed the session
     } finally { await mock.close() }
   })
 })
@@ -255,5 +258,38 @@ test('API error is reported cleanly (exit 1), not as a stack trace', async () =>
     assert.equal(r.code, 1)
     assert.match(r.stdout, /error:/)
     assert.doesNotMatch(r.stderr, /at .*\.ts/)
+  })
+})
+
+test('end of session shows the facts to be remembered and saves them only when approved', async () => {
+  const isExtractor = (b: any) => b.messages.find((m: any) => m.role === 'system')?.content.includes('extract durable project knowledge')
+  for (const [answer, saved] of [['y', true], ['', false]] as const) {
+    await workspace(async (cwd) => {
+      const mock = await startMock({ script: (body) => ({ text: isExtractor(body) ? '["The project deploys from the release branch."]' : 'noted' }) })
+      try {
+        const env = { OQELIRA_EMBEDDING_DEPLOYMENT: 'embed-test' }
+        const r = await runCli(M, { cwd, baseURL: mock.baseURL, env, stdin: `we deploy from release\nyes the release branch\n/exit\n${answer ? answer + '\n' : ''}` })
+        assert.match(r.stdout, /\? save 1 fact from this session to project memory/)
+        assert.match(r.stdout, /\+ The project deploys from the release branch\./) // the exact text is previewed
+        assert.equal(/Saved 1 memory/.test(r.stdout), saved, r.stdout)
+        const list = await runCli(M, { cwd, baseURL: mock.baseURL, env, stdin: '/memory\n/exit\n' })
+        assert.equal(/deploys from the release branch/.test(list.stdout), saved, list.stdout)
+      } finally { await mock.close() }
+    })
+  }
+})
+
+test('model-controlled text cannot rewrite the approval screen: control sequences never reach stdout', async () => {
+  const E = String.fromCharCode(27)
+  const hostile = `Safe note.${E}[2K${E}[1A\rApproved: nothing to see${E}]0;pwned\u0007`
+  await workspace(async (cwd) => {
+    const mock = await startMock({ script: (body, n) => (n === 0 ? { toolCall: { name: 'write_file', args: { path: `a${E}[31m.txt`, content: hostile } } } : { text: `done ${hostile}` }) })
+    try {
+      const r = await runCli([...M, 'write the file'], { cwd, baseURL: mock.baseURL, stdin: 'n\n', env: { NO_COLOR: '' } })
+      // colors are off when stdout is not a TTY, so any ESC or CR in the output would have come from the model
+      assert.ok(!r.stdout.includes(E), JSON.stringify(r.stdout))
+      assert.ok(!r.stdout.includes('\r') && !r.stdout.includes('\u0007'))
+      assert.match(r.stdout, /Safe note\.Approved: nothing to see/) // the visible text itself is preserved
+    } finally { await mock.close() }
   })
 })

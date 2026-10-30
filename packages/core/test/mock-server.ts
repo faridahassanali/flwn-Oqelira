@@ -5,7 +5,7 @@
  */
 import http from 'node:http'
 
-export type Reply = { text: string } | { toolCall: { name: string; args: unknown } }
+export type Reply = { text: string } | { toolCall: { name: string; args: unknown } } | { fail: string }
 
 export interface MockOptions {
   /** Decide the reply for each request. `n` is the 0-based request count. */
@@ -19,6 +19,14 @@ export async function startMock(opts: MockOptions) {
   const server = http.createServer(async (req, res) => {
     let raw = ''
     for await (const chunk of req) raw += chunk
+    if (req.method === 'POST' && req.url?.endsWith('/embeddings')) {
+      // Deterministic bag-of-words vectors: shared words => similar vectors.
+      const input: string[] = [].concat(JSON.parse(raw).input)
+      const vec = (t: string) => { const v = new Array(64).fill(0); for (const w of t.toLowerCase().match(/[a-z]+/g) ?? []) { let h = 0; for (const c of w) h = (h * 31 + c.charCodeAt(0)) % 64; v[h] += 1 } return v }
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ object: 'list', model: 'mock-embed', data: input.map((t, index) => ({ object: 'embedding', index, embedding: vec(t) })), usage: { prompt_tokens: 1, total_tokens: 1 } }))
+      return
+    }
     if (req.method !== 'POST' || !req.url?.endsWith('/chat/completions')) {
       res.writeHead(404).end()
       return
@@ -42,6 +50,11 @@ export async function startMock(opts: MockOptions) {
     }
 
     const reply = opts.script(body, requests.length - 1)
+    if ('fail' in reply) {
+      res.writeHead(500, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ error: { message: reply.fail } }))
+      return
+    }
     const base = { id: 'chatcmpl-mock', object: 'chat.completion.chunk', created: 0, model: body.model }
     const chunks: unknown[] = []
     if ('text' in reply) {

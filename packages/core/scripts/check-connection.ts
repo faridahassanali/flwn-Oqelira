@@ -2,7 +2,7 @@ import { loadEnvFiles } from '../src/config/env.js'
 import { createFoundry, foundryConfigFromEnv } from '../src/providers/foundry.js'
 import { modelsFromEnv, findModel } from '../src/providers/registry.js'
 
-loadEnvFiles({ cwd: process.cwd() })
+loadEnvFiles({ cwd: process.cwd(), explicit: '.env' })
 try {
   const models = modelsFromEnv()
   const model = process.env.OQELIRA_MODEL ? findModel(process.env.OQELIRA_MODEL, models) : models[0]!

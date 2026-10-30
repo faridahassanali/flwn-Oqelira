@@ -3,38 +3,38 @@ import { test } from 'node:test'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import type { ModelProvider, ModelRequest } from '@oqelira/core'
 import type { HostEvent } from '@oqelira/protocol'
+import { startMock } from '../../core/test/mock-server.js'
+import type { Reply } from '../../core/test/mock-server.js'
+import { spawnEngine } from '../src/engine-client.js'
 import { createHost } from '../src/server.js'
 
-async function fixture(fn: (f: { cwd: string; origin: string; requests: ModelRequest[]; post: (route: string, body: unknown, extra?: Record<string, string>) => Promise<Response> }) => Promise<void>, timeout = 1000) {
+/** The model is a mock HTTP server; the agent is the real engine process the host bridges to. */
+function script(body: any): Reply {
+  const lastUser = [...body.messages].reverse().find((m: any) => m.role === 'user')?.content
+  const last = body.messages.at(-1)
+  if (last?.role === 'tool') return { text: `RESULT: ${last.content}` }
+  if (lastUser === 'fail') return { fail: 'upstream credential: NEVER_ECHO_THIS' }
+  if (lastUser === 'write') return { toolCall: { name: 'write_file', args: { path: 'result.txt', content: 'APPROVED' } } }
+  if (lastUser === 'read') return { toolCall: { name: 'read_file', args: { path: 'hello.txt' } } }
+  return { text: 'Hello world' }
+}
+
+const TOKEN = 'x'.repeat(40)
+async function fixture(fn: (f: { cwd: string; origin: string; requests: any[]; post: (route: string, body: unknown, extra?: Record<string, string>) => Promise<Response> }) => Promise<void>, timeout = 1000) {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'oqelira-host-'))
   await fs.writeFile(path.join(cwd, 'hello.txt'), 'HELLO')
   await fs.writeFile(path.join(cwd, 'index.html'), '<h1>Workspace</h1>')
-  const requests: ModelRequest[] = []
-  const provider: ModelProvider = { id: 'test', async *stream(req) {
-    requests.push({ ...req, messages: [...req.messages] })
-    const last = req.messages.at(-1)
-    if (last?.role === 'user' && last.content === 'fail') throw new Error('upstream credential: NEVER_ECHO_THIS')
-    if (last?.role === 'user' && last.content === 'write') {
-      yield { type: 'tool-call', call: { id: 'write-1', name: 'write_file', input: { path: 'result.txt', content: 'APPROVED' } } }
-      yield { type: 'finish', reason: 'tool-calls' }
-    } else if (last?.role === 'user' && last.content === 'read') {
-      yield { type: 'tool-call', call: { id: 'read-1', name: 'read_file', input: { path: 'hello.txt' } } }
-      yield { type: 'finish', reason: 'tool-calls' }
-    } else {
-      yield { type: 'text-delta', text: 'Hello ' }
-      yield { type: 'text-delta', text: 'world' }
-      yield { type: 'finish', reason: 'stop' }
-    }
-  } }
-  const host = createHost({ cwd, dist: cwd, models: [{ id: 'test', deployment: 'fixture-deployment', api: 'chat', speed: 'fast' }], configured: true, provider: () => provider, approvalTimeoutMs: timeout })
+  const mock = await startMock({ script })
+  const env = { ...process.env, OQELIRA_NO_ENV_FILES: '1', OQELIRA_HOME: `${cwd}-home`, FOUNDRY_BASE_URL: mock.baseURL, FOUNDRY_KEY: 'test-key' }
+  const models = [{ id: 'mai-thinking', deployment: 'MAI-Thinking-1', api: 'chat' as const, speed: 'slow' as const }]
+  const host = createHost({ cwd, dist: cwd, models, configured: true, launchToken: TOKEN, startEngine: () => spawnEngine({ cwd, env, args: ['--approval-timeout-ms', String(timeout)] }) })
   const origin = await host.listen()
   const post = (route: string, body: unknown, extra: Record<string, string> = {}) => fetch(origin + route, {
-    method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', 'X-Oqelira-Client': 'workspace', ...extra }, body: JSON.stringify(body),
+    method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', 'X-Oqelira-Client': 'workspace', 'X-Oqelira-Launch': TOKEN, ...extra }, body: JSON.stringify(body),
   })
-  try { await fn({ cwd, origin, requests, post }) }
-  finally { await host.close(); await fs.rm(cwd, { recursive: true, force: true }) }
+  try { await fn({ cwd, origin, requests: mock.requests, post }) }
+  finally { await host.close(); await mock.close(); await fs.rm(cwd, { recursive: true, force: true }); await fs.rm(`${cwd}-home`, { recursive: true, force: true }) }
 }
 async function collect(response: Response, onEvent?: (event: HostEvent) => Promise<void>): Promise<HostEvent[]> {
   assert.equal(response.status, 200)
@@ -61,38 +61,38 @@ async function collect(response: Response, onEvent?: (event: HostEvent) => Promi
 
 test('host serves the renderer with CSP and exposes deployment metadata without credentials', async () => {
   await fixture(async ({ origin }) => {
-    const response = await fetch(origin)
+    const response = await fetch(origin, { headers: { 'X-Oqelira-Launch': TOKEN } })
     assert.match(response.headers.get('content-security-policy')!, /connect-src 'self'/)
     assert.match(await response.text(), /Workspace/)
-    const config = await (await fetch(origin + '/api/config')).json()
+    const config = await (await fetch(origin + '/api/config', { headers: { 'X-Oqelira-Launch': TOKEN } })).json()
     assert.deepEqual(Object.keys(config).sort(), ['configured', 'models', 'workspace'])
-    assert.equal(config.models[0].deployment, 'fixture-deployment')
+    assert.equal(config.models[0].deployment, 'MAI-Thinking-1')
   })
 })
 test('host rejects cross-origin, unmarked, malformed and invalid-model run requests', async () => {
   await fixture(async ({ post }) => {
-    assert.equal((await post('/api/run', { prompt: 'hi', model: 'test' }, { Origin: 'https://untrusted.example' })).status, 403)
-    assert.equal((await post('/api/run', { prompt: 'hi', model: 'test' }, { 'X-Oqelira-Client': '' })).status, 403)
-    assert.equal((await post('/api/run', { prompt: 5, model: 'test' })).status, 400)
+    assert.equal((await post('/api/run', { prompt: 'hi', model: 'mai-thinking' }, { Origin: 'https://untrusted.example' })).status, 403)
+    assert.equal((await post('/api/run', { prompt: 'hi', model: 'mai-thinking' }, { 'X-Oqelira-Client': '' })).status, 403)
+    assert.equal((await post('/api/run', { prompt: 5, model: 'mai-thinking' })).status, 400)
     assert.equal((await post('/api/run', { prompt: 'hi', model: 'absent' })).status, 400)
     assert.equal((await post('/api/run', null)).status, 400)
-    assert.equal((await post('/api/run', { prompt: 'hi', model: 'test', sessionId: 'unknown' })).status, 404)
+    assert.equal((await post('/api/run', { prompt: 'hi', model: 'mai-thinking', sessionId: 'unknown' })).status, 404)
   })
 })
 test('host streams text and preserves server-owned history across turns', async () => {
   await fixture(async ({ post, requests }) => {
-    const events = await collect(await post('/api/run', { prompt: 'hello', model: 'test' }))
+    const events = await collect(await post('/api/run', { prompt: 'hello', model: 'mai-thinking' }))
     assert.equal(events.filter(e => e.type === 'text').map(e => e.text).join(''), 'Hello world')
     const started = events.find(e => e.type === 'started')!
     assert.equal(started.type, 'started')
-    await collect(await post('/api/run', { prompt: 'continue', model: 'test', sessionId: started.sessionId }))
-    assert.equal(requests[1]!.messages.length, 3)
+    await collect(await post('/api/run', { prompt: 'continue', model: 'mai-thinking', sessionId: started.sessionId }))
+    assert.deepEqual(requests[1]!.body.messages.map((m: any) => m.role), ['system', 'user', 'assistant', 'user'])
     assert.equal(events.at(-1)?.type, 'done')
   })
 })
 test('read tool executes without a write approval and returns actual file content', async () => {
   await fixture(async ({ post }) => {
-    const events = await collect(await post('/api/run', { prompt: 'read', model: 'test' }))
+    const events = await collect(await post('/api/run', { prompt: 'read', model: 'mai-thinking' }))
     assert.ok(!events.some(e => e.type === 'approval'))
     assert.ok(events.some(e => e.type === 'tool-result' && e.output === 'HELLO'))
   })
@@ -101,7 +101,7 @@ for (const allowed of [false, true]) {
   test(`write tool waits for a matching approval; allowed=${allowed}`, async () => {
     await fixture(async ({ post, cwd }) => {
       let runId = ''
-      const events = await collect(await post('/api/run', { prompt: 'write', model: 'test' }), async event => {
+      const events = await collect(await post('/api/run', { prompt: 'write', model: 'mai-thinking' }), async event => {
         if (event.type === 'started') runId = event.runId
         if (event.type !== 'approval') return
         await assert.rejects(fs.access(path.join(cwd, 'result.txt')))
@@ -118,14 +118,14 @@ for (const allowed of [false, true]) {
 }
 test('expired approvals fail closed without writing a file', async () => {
   await fixture(async ({ post, cwd }) => {
-    const events = await collect(await post('/api/run', { prompt: 'write', model: 'test' }))
+    const events = await collect(await post('/api/run', { prompt: 'write', model: 'mai-thinking' }))
     assert.ok(events.some(e => e.type === 'tool-result' && e.isError))
     await assert.rejects(fs.access(path.join(cwd, 'result.txt')))
   }, 30)
 })
 test('one run per session; disconnect cancels a pending approval', async () => {
   await fixture(async ({ post, cwd }) => {
-    const response = await post('/api/run', { prompt: 'write', model: 'test' })
+    const response = await post('/api/run', { prompt: 'write', model: 'mai-thinking' })
     const reader = response.body!.getReader()
     let text = ''
     let runId = '', sessionId = '', approvalId = ''
@@ -140,12 +140,12 @@ test('one run per session; disconnect cancels a pending approval', async () => {
         if (event.type === 'approval') approvalId = event.approval.id
       }
     }
-    assert.equal((await post('/api/run', { prompt: 'hello', model: 'test', sessionId })).status, 409)
+    assert.equal((await post('/api/run', { prompt: 'hello', model: 'mai-thinking', sessionId })).status, 409)
     await reader.cancel()
     // Acceptance of a new run proves the previous run released the session.
     let next: Response | undefined
     for (let i = 0; i < 20; i++) {
-      next = await post('/api/run', { prompt: 'hello', model: 'test', sessionId })
+      next = await post('/api/run', { prompt: 'hello', model: 'mai-thinking', sessionId })
       if (next.status === 200) break
       await next.text()
       await new Promise(resolve => setTimeout(resolve, 5))
@@ -157,8 +157,44 @@ test('one run per session; disconnect cancels a pending approval', async () => {
 })
 test('upstream errors never reveal provider diagnostics or credentials', async () => {
   await fixture(async ({ post }) => {
-    const events = await collect(await post('/api/run', { prompt: 'fail', model: 'test' }))
+    const events = await collect(await post('/api/run', { prompt: 'fail', model: 'mai-thinking' }))
     assert.equal(events.at(-1)?.type, 'error')
     assert.ok(!JSON.stringify(events).includes('NEVER_ECHO_THIS'))
   })
+})
+
+test('the engine never reads the workspace .env, so a project cannot redirect the model key', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'oqelira-host-env-'))
+  const mock = await startMock({ script })
+  // Evil project .env points the key at a dead address; the host's own environment points at the mock.
+  await fs.writeFile(path.join(cwd, '.env'), 'FOUNDRY_BASE_URL=http://127.0.0.1:1/v1\n')
+  const env: NodeJS.ProcessEnv = { ...process.env, OQELIRA_HOME: `${cwd}-home`, FOUNDRY_ENDPOINT: mock.baseURL.replace(/\/v1$/, ''), FOUNDRY_KEY: 'test-key' }
+  for (const k of ['OQELIRA_NO_ENV_FILES', 'FOUNDRY_BASE_URL']) delete env[k]
+  const models = [{ id: 'mai-thinking', deployment: 'MAI-Thinking-1', api: 'chat' as const, speed: 'slow' as const }]
+  const host = createHost({ cwd, dist: cwd, models, configured: true, launchToken: TOKEN, startEngine: () => spawnEngine({ cwd, env }) })
+  const origin = await host.listen()
+  try {
+    const events = await collect(await fetch(origin + '/api/run', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', 'X-Oqelira-Client': 'workspace', 'X-Oqelira-Launch': TOKEN }, body: JSON.stringify({ prompt: 'hello', model: 'mai-thinking' }) }))
+    assert.equal(events.filter((e) => e.type === 'text').map((e) => e.text).join(''), 'Hello world')
+    assert.equal(mock.requests.length, 1)
+  } finally { await host.close(); await mock.close(); await fs.rm(cwd, { recursive: true, force: true }) }
+})
+
+test('a browser tab cannot use the host: every request needs the desktop launch token', async () => {
+  await fixture(async ({ origin, post }) => {
+    assert.equal((await fetch(origin)).status, 403)
+    assert.equal((await fetch(origin + '/api/config')).status, 403)
+    assert.equal((await fetch(origin + '/api/config', { headers: { 'X-Oqelira-Launch': 'wrong'.padEnd(40, 'x') } })).status, 403)
+    assert.equal((await post('/api/run', { prompt: 'hi', model: 'mai-thinking' }, { 'X-Oqelira-Launch': 'short' })).status, 403)
+    assert.equal((await post('/api/approval', { runId: 'r', approvalId: 'a', allowed: true }, { 'X-Oqelira-Launch': '' })).status, 403)
+  })
+})
+test('the host process refuses to start without a launch token', async () => {
+  const { spawnSync } = await import('node:child_process')
+  const main = path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'src', 'main.ts')
+  const env = { ...process.env, OQELIRA_NO_ENV_FILES: '1' } as NodeJS.ProcessEnv
+  delete env.OQELIRA_LAUNCH_TOKEN
+  const r = spawnSync(process.execPath, ['--import', 'tsx', main], { env, encoding: 'utf8', timeout: 20_000 })
+  assert.equal(r.status, 2)
+  assert.match(r.stderr, /desktop app/)
 })

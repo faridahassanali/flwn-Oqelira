@@ -42,8 +42,23 @@
       {
         "command": "oqelira.revert",
         "title": "Oqelira: Revert a File Change"
+      },
+      {
+        "command": "oqelira.memory",
+        "title": "Oqelira: Review Project Memory"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Oqelira",
+      "properties": {
+        "oqelira.enginePath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "markdownDescription": "Path to `oqelira-engine.mjs`. Leave empty to use the engine next to this extension. Machine-scoped: a workspace cannot change it."
+        }
+      }
+    }
   },
   "scripts": {
     "build": "esbuild src/extension.ts --bundle --platform=node --target=node20 --format=cjs --external:vscode --outfile=dist/extension.cjs",
@@ -52,7 +67,9 @@
     "test": "node --import tsx --test test/*.test.ts"
   },
   "dependencies": {
-    "@oqelira/core": "*"
+    "@oqelira/core": "*",
+    "@oqelira/engine": "*",
+    "@oqelira/protocol": "*"
   },
   "devDependencies": {
     "@types/vscode": "^1.96.0",

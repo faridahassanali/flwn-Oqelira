@@ -10,7 +10,7 @@ export interface HostConfig {
 export interface Approval {
   id: string
   tool: string
-  risk: 'read' | 'write' | 'exec'
+  risk: 'read' | 'write' | 'exec' | 'network'
   summary: string
   input: unknown
 }
@@ -24,4 +24,29 @@ export type HostEvent = { sequence?: number } & (
   | { type: 'done'; reason: string }
   | { type: 'error'; message: string }
   | { type: 'connection'; state: 'reconnecting' | 'connected' }
+  | { type: 'notice'; message: string }
 )
+
+/**
+ * Engine protocol: newline-delimited JSON over stdio (`oqelira serve`). The CLI is the engine; the web host
+ * and VS Code are interfaces that speak this. Credentials travel in the engine's environment, never here.
+ */
+export const ENGINE_PROTOCOL = 1
+export type EngineRequest =
+  | { type: 'hello'; protocol: number }
+  | { type: 'run'; prompt: string; model?: string; sessionId?: string }
+  | { type: 'approval'; approvalId: string; allowed: boolean; always?: 'project' | 'user' }
+  | { type: 'cancel' }
+  | { type: 'clear'; sessionId?: string }
+  | { type: 'sessions' }
+  | { type: 'end'; sessionId?: string }
+  | { type: 'memory'; action: 'list' | 'forget' | 'approve'; id?: string }
+  | { type: 'history'; sessionId?: string }
+export type EngineMessage =
+  | { type: 'ready'; protocol: number; version: string; cwd: string; model: string; models: { id: string; deployment: string }[]; memory: boolean; webSearch: boolean }
+  | { type: 'cleared' }
+  | { type: 'sessions'; sessions: { id: string; title: string; model: string; createdAt: string; updatedAt: string; messages: number }[] }
+  | { type: 'history'; sessionId: string; messages: unknown[] }
+  | { type: 'ended'; saved: number }
+  | { type: 'memory'; entries: { id: string; text: string; kind: string; status: string; createdAt: string }[]; forgotten?: boolean; approved?: number }
+  | HostEvent

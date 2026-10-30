@@ -1,9 +1,9 @@
-import { jsonSchema, streamText, tool } from 'ai'
+import { embedMany, jsonSchema, streamText, tool } from 'ai'
 import type { LanguageModel, ModelMessage } from 'ai'
 import { createOpenAI } from '@ai-sdk/openai'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import type { ModelConfig } from './registry.js'
-import type { FinishReason, Message, ModelEvent, ModelProvider, ModelRequest, ToolSpec } from './types.js'
+import type { EmbeddingProvider, FinishReason, Message, ModelEvent, ModelProvider, ModelRequest, ToolSpec } from './types.js'
 
 export interface FoundryOptions {
   /** e.g. https://<resource>.openai.azure.com/openai/v1 */
@@ -165,5 +165,17 @@ function toModelMessages(messages: Message[]): ModelMessage[] {
           })),
         }
     }
+  })
+}
+
+/** Embedding deployments on the same Foundry resource. The deployment name always comes from config. */
+export function createFoundryEmbedder(opts: Pick<FoundryOptions, 'baseURL' | 'apiKey' | 'fetch'>): (deployment: string) => EmbeddingProvider {
+  const client = createOpenAICompatible({ name: 'foundry', baseURL: opts.baseURL, headers: { 'api-key': opts.apiKey }, fetch: opts.fetch })
+  return (deployment) => ({
+    id: deployment,
+    async embed(texts, signal) {
+      const { embeddings } = await embedMany({ model: client.embeddingModel(deployment), values: texts, abortSignal: signal })
+      return embeddings
+    },
   })
 }

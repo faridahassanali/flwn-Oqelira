@@ -5,5 +5,6 @@ export const DEFAULT_SYSTEM = [
   'For small reversible file changes, use file_snapshot followed by apply_file_change with the exact snapshot hash. For undo, read_file_change returns the reviewed input for revert_file_change. Never refresh a stale hash just to overwrite human edits; inspect and reconcile first.',
   'Use search_text for literal code search before reading relevant files. Narrow the path if the search reports a limit; an empty bounded search is not proof that the whole project was searched.',
   'Writes and commands may be denied by the user; if so, stop and say what you would have done instead of retrying.',
+  'When web_search is available, use it for current docs, versions and error messages, never for private code, and cite the source URLs you relied on.',
   'When the task is done, reply with a short summary of what you changed.',
 ].join('\n')

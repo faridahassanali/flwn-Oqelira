@@ -16,6 +16,8 @@ export function renderApproval(req: ApprovalRequest): string {
   const out = [yellow(`\n? ${req.summary}`)]
   if (req.tool === 'edit_file') {
     out.push(...block('-', String(input.old_string ?? ''), red), ...block('+', String(input.new_string ?? ''), green))
+  } else if (req.tool === 'save_memory' && Array.isArray(input.facts)) {
+    out.push(...block('+', input.facts.map(String).join('\n'), green))
   } else if (req.tool === 'write_file') {
     out.push(...block('+', String(input.content ?? ''), green))
   }
