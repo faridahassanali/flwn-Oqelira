@@ -28,17 +28,18 @@ const commandOf = (req: ApprovalRequest) => (req.risk === 'exec' ? str((req.inpu
 
 const SKIP_ROOT = new Set(['.git', '.oqelira', 'node_modules'])
 const MAX_FILES = 2000
-const MAX_FILE = 8_000_000
+const MAX_BYTES = 512_000_000 // total hashed per fingerprint
 
 /**
- * Hash of what decides what commands do: every file directly in the project root (so a new or renamed build file
+ * Hash of what decides what commands do: every file directly in the project root, plus any file the command itself names (so a new or renamed build file
  * cannot slip past a name list), root dot-directories (.cargo...) and scripts/, recursively, following symlinks.
  * null when it cannot be computed with confidence (too deep, too many files, unreadable): then no rule matches.
  */
-function fingerprint(cwd: string): string | null {
+function fingerprint(cwd: string, command: string): string | null {
   const hash = crypto.createHash('sha256')
   const seen = new Set<string>()
   let count = 0
+  let bytes = 0
   const feed = (rel: string): boolean => {
     try {
       const full = path.join(cwd, rel)
@@ -51,8 +52,17 @@ function fingerprint(cwd: string): string | null {
         return true
       }
       if (++count > MAX_FILES || rel.split(path.sep).length > 6) return false // past the cap: do not pretend we looked
-      if (st.size > MAX_FILE) return false // too big to hash fully
-      hash.update(rel + '\0' + st.size + '\0').update(fs.readFileSync(full))
+      hash.update(rel + '\0' + st.size + '\0')
+      const fd = fs.openSync(full, 'r') // streamed: any file size, whole content
+      try {
+        const chunk = Buffer.allocUnsafe(1 << 20)
+        for (let n; (n = fs.readSync(fd, chunk, 0, chunk.length, null)) > 0; ) {
+          if ((bytes += n) > MAX_BYTES) return false
+          hash.update(chunk.subarray(0, n))
+        }
+      } finally {
+        fs.closeSync(fd)
+      }
       return true
     } catch (e) {
       return (e as NodeJS.ErrnoException).code === 'ENOENT' // a dangling link or vanished file contributes only its name; anything else (permissions...) fails closed
@@ -66,6 +76,18 @@ function fingerprint(cwd: string): string | null {
     const isDir = fs.statSync(path.join(cwd, n), { throwIfNoEntry: false })?.isDirectory()
     if (isDir && n.toLowerCase() !== 'scripts' && !n.startsWith('.')) continue // source directories are not build definitions
     if (!feedChild(n)) return null
+  }
+  // Files the command names (`node src/build.js`, `./run.sh`) run whatever they now contain. Directories are not
+  // hashed (`eslint src` would then go stale on every edit); imports of a named file are not followed.
+  let realCwd: string
+  try { realCwd = fs.realpathSync(cwd) } catch { return null }
+  for (const token of new Set(command.split(/[\s;&|<>()$`'"=]+/))) {
+    if (!token) continue
+    let real: string
+    try { real = fs.realpathSync(path.resolve(cwd, token)) } catch { continue } // not a file here
+    const rel = path.relative(realCwd, real)
+    if (!rel || rel.startsWith('..') || path.isAbsolute(rel) || !fs.statSync(real).isFile()) continue
+    if (!feedChild(path.relative(cwd, path.resolve(cwd, token)))) return null
   }
   return hash.digest('hex')
 }
@@ -117,7 +139,7 @@ export function openRules(cwd: string, stateRoot = path.join(os.homedir(), '.oqe
     if (req.risk === 'network') return null
     if (req.risk === 'exec') {
       const command = commandOf(req)
-      const print = fingerprint(cwd)
+      const print = fingerprint(cwd, command ?? '')
       return command === undefined || print === null ? null : { tool: req.tool, command, fingerprint: print }
     }
     if (req.risk === 'write') {

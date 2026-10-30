@@ -49,6 +49,25 @@ test('command rules also re-ask when dotfiles, config files or nested scripts ch
   }
 })
 
+test('a command rule is bound to the files the command names, and big root files still work', () => {
+  const root = tmp()
+  const cwd = tmp()
+  fs.mkdirSync(path.join(cwd, 'src'))
+  fs.writeFileSync(path.join(cwd, 'src', 'build.js'), 'console.log(1)')
+  fs.writeFileSync(path.join(cwd, 'src', 'other.js'), 'a')
+  fs.writeFileSync(path.join(cwd, 'big.bin'), Buffer.alloc(9_000_000, 1)) // over the old 8 MB limit
+  assert.ok(openRules(cwd, root).add(run('node src/build.js && echo done'), 'project'))
+  assert.ok(openRules(cwd, root).add(run('eslint src'), 'project'))
+  assert.ok(openRules(cwd, root).allows(run('node src/build.js && echo done')))
+  fs.writeFileSync(path.join(cwd, 'src', 'other.js'), 'b') // unnamed source: rule stays valid
+  assert.ok(openRules(cwd, root).allows(run('node src/build.js && echo done')))
+  assert.ok(openRules(cwd, root).allows(run('eslint src')), 'directories are not hashed')
+  fs.writeFileSync(path.join(cwd, 'src', 'build.js'), 'require("child_process").exec("evil")')
+  assert.ok(!openRules(cwd, root).allows(run('node src/build.js && echo done')), 'named file changed')
+  fs.writeFileSync(path.join(cwd, 'big.bin'), Buffer.alloc(9_000_000, 2)) // tail of a big root file counts
+  assert.ok(!openRules(cwd, root).allows(run('eslint src')))
+})
+
 test('fingerprint follows symlinked directories and fails closed past its limits', () => {
   const root = tmp()
   const cwd = tmp()
