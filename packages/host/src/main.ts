@@ -13,7 +13,8 @@ if (launchToken.length < 32) {
   process.exit(2)
 }
 const root = fileURLToPath(new URL('../../../', import.meta.url))
-loadEnvFiles({ cwd: root })
+// The install directory's own .env is the app's configuration, not an untrusted project's.
+loadEnvFiles({ cwd: root, explicit: path.join(root, '.env') })
 const cwd = path.resolve(process.env.OQELIRA_WORKSPACE ?? root)
 let config: ReturnType<typeof foundryConfigFromEnv> | undefined
 try { config = foundryConfigFromEnv() } catch { /* UI shows setup guidance */ }

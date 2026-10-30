@@ -92,13 +92,16 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
   if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) throw new Error(`Not a directory: ${cwd}`)
   // Read before any .env loads: a project's own .env must not choose where history and memory are written.
   const stateRoot = process.env.OQELIRA_HOME
-  loadEnvFiles({ explicit: opts.envFile, cwd })
+  const startupNotices: string[] = []
+  const skipped: string[] = []
+  loadEnvFiles({ explicit: opts.envFile, cwd, onIgnored: (_file, keys) => skipped.push(...keys) })
+  if (skipped.length) startupNotices.push(`Ignored ${skipped.join(', ')} in the project's .env: a project cannot set connection settings or keys. Put them in ~/.oqelira/.env, the environment, or pass --env-file.`)
 
   let config
   try {
     config = foundryConfigFromEnv()
   } catch (e) {
-    throw new Error(`${(e as Error).message}\nSet them in the environment, or in ~/.oqelira/.env, or in ./.env, or pass --env-file.`)
+    throw new Error(`${(e as Error).message}\nSet them in the environment or in ~/.oqelira/.env, or pass --env-file.${skipped.length ? ` (Ignored in the project's .env, which cannot set them: ${skipped.join(', ')}.)` : ''}`)
   }
   const models = modelsFromEnv()
   let model = findModel(opts.model ?? process.env.OQELIRA_MODEL ?? 'gpt-6-sol', models)
@@ -107,7 +110,6 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
   // Project memory is on only when an embedding deployment is configured (never hardcoded).
   let memory: ContextGateway | undefined
   const embeddingDeployment = process.env.OQELIRA_EMBEDDING_DEPLOYMENT?.trim()
-  const startupNotices: string[] = []
   if (embeddingDeployment) {
     try {
       memory = await openLocalMemory(cwd, createFoundryEmbedder(config)(embeddingDeployment), stateRoot)

@@ -33,7 +33,7 @@ bridges the window to the headless engine (`@oqelira/engine`). Electron starts i
 port with a per-launch secret that the host requires on every request, so a browser tab cannot
 use it, and loads the renderer with sandboxing and context isolation enabled and Node integration disabled.
 
-Configure `FOUNDRY_KEY` and `FOUNDRY_ENDPOINT` in the root `.env` before starting.
+Configure `FOUNDRY_KEY` and `FOUNDRY_ENDPOINT` in `~/.oqelira/.env` (or the environment) before starting. A project's own `.env` cannot set them; to use one deliberately, pass `--env-file .env`.
 Provider keys stay in the host. The UI selects models from the host registry;
 override it with `OQELIRA_MODELS_JSON` (see `.env.example`).
 Set `OQELIRA_WORKSPACE` to choose a project; it is fixed for the life of the host.
@@ -72,7 +72,8 @@ remain deferred; future Flwn integrations must use one gateway.
 
     npm install            # at the repo root (npm workspaces)
     npm test               # core, CLI and host tests; local mock servers only
-    copy .env.example .env # at the repo root; fill FOUNDRY_ENDPOINT / FOUNDRY_KEY (never commit .env)
+    copy .env.example .env # at the repo root: used by `npm run live` and the desktop app (never commit .env)
+    # for the CLI/engine, put the same settings in ~/.oqelira/.env; a project's own .env cannot set keys
     npm run live           # real Foundry: streaming + tools, permissions, edit + run
 
 ## Use the CLI

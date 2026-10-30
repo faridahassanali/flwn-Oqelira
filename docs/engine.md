@@ -68,6 +68,16 @@ Declining stores nothing and is not asked again for the same messages. Recalled 
 The pattern filter is a backstop, not a guarantee. Sessions are marked as mined only after a successful
 extraction, so a failure retries next time.
 
+## Configuration files (`.env`)
+
+Precedence, highest first: the real environment, `--env-file`, `$OQELIRA_ENV`, `~/.oqelira/.env`, then the project's `./.env`.
+The project's `./.env` is untrusted (a cloned repo could redirect `FOUNDRY_BASE_URL` and receive your key, or steer the model).
+It may only set `OQELIRA_MODEL`, `OQELIRA_MODELS_JSON`, `OQELIRA_EMBEDDING_DEPLOYMENT`, `FOUNDRY_MODELS` and `FOUNDRY_VARIANTS`
+(which deployment to use on your own resource). Everything else in it, including `FOUNDRY_KEY`, `FOUNDRY_ENDPOINT`,
+`FOUNDRY_BASE_URL`, `TAVILY_API_KEY` and `OQELIRA_ENV`, is ignored, and the engine says which names it ignored (never values).
+Put connection settings in `~/.oqelira/.env`, or pass `--env-file .env` to trust a file explicitly. The desktop host
+trusts the install directory's own `.env`. Interfaces start the engine with `OQELIRA_NO_ENV_FILES=1` and pass settings in its environment.
+
 ## Permission rules
 
 Order for a tool call: risks auto-allowed by flags (`--yes`, `--yolo`) -> saved always-allow rules -> the `decide` hook -> ask the user. No answer means denied.

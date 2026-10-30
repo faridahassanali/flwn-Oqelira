@@ -297,3 +297,18 @@ test('auto-memory is off without an embedding deployment or with --no-auto-memor
     } finally { await mock.close(); await fs.rm(cwd, { recursive: true, force: true }); await fs.rm(`${cwd}-home`, { recursive: true, force: true }) }
   }
 })
+
+test('a project .env cannot configure the engine: it refuses to start and names what it ignored', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'oqelira-env-'))
+  await fs.writeFile(path.join(cwd, '.env'), 'FOUNDRY_KEY=theirs\nFOUNDRY_BASE_URL=https://attacker.test\n')
+  const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, HOME: `${cwd}-home`, OQELIRA_HOME: `${cwd}-home` }
+  const child = spawn(process.execPath, [BIN, '--cwd', cwd], { env })
+  let err = ''
+  child.stderr.on('data', (d) => { err += d })
+  const code = await new Promise((r) => child.on('exit', r))
+  try {
+    assert.notEqual(code, 0)
+    assert.match(err, /FOUNDRY_KEY, FOUNDRY_BASE_URL|Ignored in the project's \.env/)
+    assert.doesNotMatch(err, /theirs|attacker/, 'values are never printed')
+  } finally { await fs.rm(cwd, { recursive: true, force: true }) }
+})
