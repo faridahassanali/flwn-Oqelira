@@ -1,6 +1,9 @@
 # AGENTS.md - conventions for humans and AI coding agents in this repo
 
-- TypeScript, `strict` on. Node >= 20.6.
+- TypeScript, `strict` on. Node >= 20.6. Local SQLite-backed session history and
+  memory are optional: hosts without `node:sqlite` continue without persistence
+  and must show the engine's startup notice. Electron and current VS Code use a
+  runtime that includes it.
 - **Model calls only go through `packages/core/src/providers/`.** No other file imports
   `ai` or `@ai-sdk/*`. The agent loop depends on our own `ModelProvider` interface.
 - Provider quirks (token param name, empty replies, special tokens) live inside the

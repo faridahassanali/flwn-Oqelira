@@ -76,6 +76,12 @@ remain deferred; future Flwn integrations must use one gateway.
     # for the CLI/engine, put the same settings in ~/.oqelira/.env; a project's own .env cannot set keys
     npm run live           # real Foundry: streaming + tools, permissions, edit + run
 
+Node 20.6 is the supported minimum. On a runtime without `node:sqlite` (available
+in newer Node releases), Oqelira still runs but starts without durable local session
+history or project memory and prints a notice. Use Node 22.5+ when those local
+persistence features are required; the Electron desktop app and VS Code already
+provide a compatible runtime.
+
 ## Use the CLI
 
     npm run oqelira -- --help                      # from the repo root

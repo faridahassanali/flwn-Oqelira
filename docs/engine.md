@@ -106,7 +106,9 @@ extracted memory facts are cleaned at the source too. New interfaces must escape
    session ids and approval bookkeeping, and masks engine errors. One engine, one active run.
 3. **VS Code (done):** the extension spawns the engine in VS Code's own runtime (`ELECTRON_RUN_AS_NODE`, Node 24 with `node:sqlite`), passes the key from SecretStorage via env, and keeps native diff review. Packaging the engine into the VSIX is still open (it currently finds the engine next to the extension, or via the user-scoped `oqelira.enginePath`).
 4. **Packaging:** the engine (not the CLI) is a dependency of the host and the extension (bundled in the VSIX).
-   Decide how the extension finds a Node runtime with `node:sqlite` (memory degrades without it).
+   Node 20.6 remains the supported minimum. `node:sqlite` is optional: a host without it runs without
+   durable local sessions and project memory, and the engine emits a startup notice. Node 22.5+ enables
+   those features; Electron and VS Code already provide a compatible runtime.
 5. **Cleanup:** delete the duplicated tool/rules/permission wiring in host and extension.
 
 Everything new (usage limits, compaction summaries, memory sync, MCP, hooks) is added to the
