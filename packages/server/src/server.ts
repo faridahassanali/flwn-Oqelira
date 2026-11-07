@@ -138,7 +138,9 @@ export function createCloudServer(opts: Options) {
     if (req.method === 'POST' && url.pathname === '/api/approval') {
       const data = await body(req), runId = requireId(data.runId), id = requireId(data.approvalId)
       if (typeof data.allowed !== 'boolean') throw new HttpError(400, 'Invalid decision')
-      const owner=await opts.store.runOwner(user,runId)
+      const current=runs.get(runId)
+      if(current)await accessProject(current.project)
+      const owner=current?.owner??await opts.store.runOwner(user,runId)
       if(!owner)throw new HttpError(404,'Run not found')
       const pending=await opts.store.pendingApproval(owner,session.session.id,runId,id)
       if(!pending)throw new HttpError(409,'Approval is no longer pending')

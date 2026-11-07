@@ -93,7 +93,7 @@ test('real auth, durable PostgreSQL sessions, tenant isolation, memory and appro
         const event = JSON.parse(line) as HostEvent
         if (event.type === 'started') { runId = event.runId; conversation = event.sessionId }
         if (event.type === 'approval') {
-          assert.equal((await request('/api/approval', b.cookie, { runId, approvalId: event.approval.id, allowed: true })).status, 409)
+          assert.equal((await request('/api/approval', b.cookie, { runId, approvalId: event.approval.id, allowed: true })).status, 404)
           assert.equal((await request('/api/approval', a.cookie, { runId, approvalId: event.approval.id, allowed: true })).status, 200)
         }
         if (event.type === 'done') completed = true
