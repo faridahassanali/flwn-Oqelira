@@ -4,6 +4,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import {snapshotFile,applyFileChange,readFileChange} from '../src/tools/changes.mjs'
+import {resolveInside} from '../src/tools/fs.js'
 import {runAgent} from '../src/agent/loop.js'
 import {builtinTools} from '../src/tools/index.js'
 
@@ -46,4 +47,14 @@ test('new files and deletions can be reverted; denying approval does not modify 
     assert.equal((await snapshotFile(cwd,'denied.txt')).exists,false)
     const final=result.messages.at(-1);if(final?.role==='tool')assert.equal(final.results[0]?.isError,true)
   }finally{await fs.rm(cwd,{recursive:true,force:true})}
+})
+
+test('resolveInside rejects access to a project .env file', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'oq-resolve-'))
+  try {
+    await fs.writeFile(path.join(cwd, '.env'), 'SECRET=example\n')
+    await assert.rejects(resolveInside(cwd, '.env'), /Credential and internal paths are excluded/)
+  } finally {
+    await fs.rm(cwd, { recursive: true, force: true })
+  }
 })

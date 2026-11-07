@@ -9,6 +9,7 @@ import type { ApprovalRequest } from '../src/permissions.js'
 import { createFoundry } from '../src/providers/foundry.js'
 import type { ModelConfig } from '../src/providers/registry.js'
 import { builtinTools } from '../src/tools/index.js'
+import { runCommand } from '../src/tools/shell.js'
 import { startMock } from './mock-server.js'
 import type { Reply } from './mock-server.js'
 
@@ -91,6 +92,34 @@ test('permissions: write is denied without an approver, and the file is NOT crea
       await assert.rejects(fs.access(path.join(cwd, 'out.txt')))
     } finally {
       await mock.close()
+    }
+  })
+})
+
+test('permissions: denied approval does not execute a write-risk tool', async () => {
+  await withWorkspace(async cwd => {
+    let executed = false
+    let approvalAsked = false
+    const result = await runAgent({
+      cwd, prompt: 'write', maxSteps: 1,
+      tools: [{
+        spec: { name: 'write_fixture', description: 'fixture', parameters: {} },
+        risk: 'write', describe: () => 'write fixture',
+        run: async () => { executed = true; return 'written' },
+      }],
+      permissions: { autoAllow: ['read'], approve: async () => { approvalAsked = true; return false } },
+      provider: { id: 'fixture', async *stream() {
+        yield { type: 'tool-call', call: { id: 'denied-write', name: 'write_fixture', input: {} } }
+        yield { type: 'finish', reason: 'tool-calls' }
+      } },
+    })
+    assert.equal(approvalAsked, true)
+    assert.equal(executed, false)
+    const last = result.messages.at(-1)
+    assert.equal(last?.role, 'tool')
+    if (last?.role === 'tool') {
+      assert.equal(last.results[0]?.isError, true)
+      assert.match(last.results[0]!.output, /not allowed/)
     }
   })
 })
@@ -212,6 +241,22 @@ test('run_command: needs approval, runs in the workspace, and does not leak FOUN
     } finally {
       delete process.env.FOUNDRY_KEY
       await mock.close()
+    }
+  })
+})
+
+test('runCommand removes TOKEN environment variables before spawning a shell command', async () => {
+  await withWorkspace(async cwd => {
+    const name = 'OQELIRA_TEST_TOKEN'
+    const previous = process.env[name]
+    process.env[name] = 'must-not-reach-child'
+    try {
+      const output = await runCommand.run({ command: 'node -e "console.log(process.env.OQELIRA_TEST_TOKEN ?? \'unset\')"' }, { cwd })
+      assert.match(output, /^unset\s*\[exit code 0\]$/)
+      assert.doesNotMatch(output, /must-not-reach-child/)
+    } finally {
+      if (previous === undefined) delete process.env[name]
+      else process.env[name] = previous
     }
   })
 })
