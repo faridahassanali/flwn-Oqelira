@@ -1,25 +1,23 @@
 import { createServer } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { randomUUID } from 'node:crypto'
+import { timingSafeEqual } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { runAgent, builtinTools, DEFAULT_SYSTEM } from '@oqelira/core'
-import type { Message, ModelConfig, ModelProvider } from '@oqelira/core'
+import type { ModelConfig } from '@oqelira/core'
 import type { HostEvent } from '@oqelira/protocol'
+import type { EngineClient } from './engine-client.js'
 
 interface HostOptions {
   cwd: string
   dist: string
   models: readonly ModelConfig[]
   configured: boolean
-  approvalTimeoutMs?: number
-  provider: (model: ModelConfig) => ModelProvider
+  /** Per-launch secret from the desktop app. Requests without it are refused, so a browser tab cannot use the host. */
+  launchToken: string
+  /** Starts (or restarts) the engine this host is an interface to. */
+  startEngine: () => EngineClient
 }
-interface Session { history: Message[]; busy: boolean }
-interface Run {
-  controller: AbortController
-  pending?: { id: string; resolve: (allowed: boolean) => void }
-}
+interface Run { pending?: string }
 class HttpError extends Error {
   constructor(readonly status: number, message: string) { super(message) }
 }
@@ -39,10 +37,15 @@ async function json(req: IncomingMessage): Promise<Record<string, unknown>> {
   } catch { throw new HttpError(400, 'Invalid JSON object') }
 }
 
-/** Local single-user host. One origin, fixed workspace, fail-closed approvals. */
+/**
+ * Internal host of the desktop app: the window's interface to the engine. It owns the HTTP security
+ * (launch token, origin, CSRF header, CSP) and nothing about the agent. One origin, fixed workspace.
+ */
 export function createHost(opts: HostOptions) {
-  const sessions = new Map<string, Session>()
+  const sessions = new Set<string>()
   const runs = new Map<string, Run>()
+  let engine: EngineClient | undefined
+  let active = false
   let origin = ''
   const reply = (res: ServerResponse, status: number, value: unknown) => {
     res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
@@ -52,6 +55,9 @@ export function createHost(opts: HostOptions) {
     // Host validation also prevents DNS rebinding; no permissive CORS headers.
     if (req.headers.host !== new URL(origin).host) throw new HttpError(403, 'Invalid host')
     if (req.headers.origin && req.headers.origin !== origin) throw new HttpError(403, 'Invalid origin')
+    const token = Buffer.from(String(req.headers['x-oqelira-launch'] ?? ''))
+    const expected = Buffer.from(opts.launchToken)
+    if (token.length !== expected.length || !timingSafeEqual(token, expected)) throw new HttpError(403, 'Open Oqelira from the desktop app')
     const url = new URL(req.url ?? '/', origin)
     if (url.pathname.startsWith('/api/')) {
       if (req.method === 'POST' && (req.headers.origin !== origin || req.headers['x-oqelira-client'] !== 'workspace')) {
@@ -63,12 +69,11 @@ export function createHost(opts: HostOptions) {
       }
       if (req.method === 'POST' && url.pathname === '/api/approval') {
         const body = await json(req)
-        if (typeof body.runId !== 'string' || typeof body.approvalId !== 'string' || typeof body.allowed !== 'boolean') throw new HttpError(400, 'Invalid approval')
+        if (typeof body.runId !== 'string' || typeof body.approvalId !== 'string' || typeof body.allowed !== 'boolean' || (body.always !== undefined && body.always !== 'project' && body.always !== 'user')) throw new HttpError(400, 'Invalid approval')
         const run = runs.get(body.runId)
-        if (!run?.pending || run.pending.id !== body.approvalId) throw new HttpError(409, 'Approval is no longer pending')
-        const pending = run.pending
+        if (!run?.pending || run.pending !== body.approvalId) throw new HttpError(409, 'Approval is no longer pending')
         run.pending = undefined
-        pending.resolve(body.allowed)
+        engine?.send({ type: 'approval', approvalId: body.approvalId, allowed: body.allowed, always: body.always })
         reply(res, 200, { ok: true })
         return
       }
@@ -78,58 +83,38 @@ export function createHost(opts: HostOptions) {
       const model = opts.models.find(m => m.id === body.model)
       if (!model) throw new HttpError(400, 'Choose a configured model')
       if (!opts.configured) throw new HttpError(503, 'Configure Foundry in the host .env, then restart the host')
-      const provider = opts.provider(model)
-      const sessionId = body.sessionId === undefined ? randomUUID() : body.sessionId
-      if (typeof sessionId !== 'string' || (body.sessionId !== undefined && !sessions.has(sessionId))) throw new HttpError(404, 'Session not found; start a new session')
-      // Bound in-memory history. Completed sessions expire when the host restarts.
-      if (!sessions.has(sessionId) && sessions.size >= 100) throw new HttpError(429, 'Session limit reached; restart the local host')
-      const session = sessions.get(sessionId) ?? { history: [], busy: false }
-      if (session.busy) throw new HttpError(409, 'This session is already running')
-      if (JSON.stringify(session.history).length > 1_000_000) throw new HttpError(413, 'Session is full; start a new session')
-      session.busy = true
-      sessions.set(sessionId, session)
-      const runId = randomUUID()
-      const run: Run = { controller: new AbortController() }
-      runs.set(runId, run)
-      const abort = () => { run.controller.abort(); run.pending?.resolve(false); run.pending = undefined }
-      res.on('close', abort)
+      if (body.sessionId !== undefined && (typeof body.sessionId !== 'string' || !sessions.has(body.sessionId))) throw new HttpError(404, 'Session not found; start a new session')
+      // Bound in-memory session ids. History itself lives in the engine.
+      if (body.sessionId === undefined && sessions.size >= 100) throw new HttpError(429, 'Session limit reached; restart the local host')
+      if (active) throw new HttpError(409, 'A run is already active')
+      if (!engine || engine.closed) engine = opts.startEngine()
+      const eng = engine
+      try { await eng.ready } catch { throw new HttpError(503, 'The engine could not start; check host configuration') }
+      if (active) throw new HttpError(409, 'A run is already active') // another request won while we awaited
+      active = true
+      const sessionId = (body.sessionId as string | undefined) ?? crypto.randomUUID()
+      sessions.add(sessionId)
+      let runId = ''
       res.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' })
       res.flushHeaders()
       const send = (event: HostEvent) => { if (!res.destroyed) res.write(JSON.stringify(event) + '\n') }
-      send({ type: 'started', runId, sessionId })
       const heartbeat = setInterval(() => { if (!res.destroyed) res.write('\n') }, 15_000)
-      try {
-        let rules = ''
-        for (const name of ['OQELIRA.md', 'AGENTS.md']) {
-          try { rules = `\n\nProject instructions (${name}):\n${(await fs.readFile(path.join(opts.cwd, name), 'utf8')).slice(0, 20_000)}`; break } catch { /* optional */ }
+      // `active` stays set until the engine reports the run finished, even if the browser left,
+      // so the engine never receives a second run while it is still unwinding the first.
+      const finish = () => { off(); clearInterval(heartbeat); active = false; if (runId) runs.delete(runId); if (!res.destroyed) res.end() }
+      const off = eng.onMessage(message => {
+        switch (message.type) {
+          case 'started': runId = message.runId; runs.set(runId, {}); send({ type: 'started', runId, sessionId }); return
+          case 'approval': { const run = runs.get(runId); if (run) run.pending = message.approval.id; send(message); return }
+          case 'done': send(message); finish(); return
+          // SDK errors may include upstream request headers or bodies; do not echo them.
+          case 'error': send({ type: 'error', message: message.message === 'Run stopped' ? 'Run stopped' : 'The model run failed. Check host configuration and retry.' }); finish(); return
+          case 'ready': case 'cleared': case 'sessions': case 'history': case 'ended': case 'memory': return
+          default: send(message)
         }
-        const result = await runAgent({
-          cwd: opts.cwd, provider, prompt: body.prompt.trim(), history: session.history,
-          tools: builtinTools, system: DEFAULT_SYSTEM + rules, signal: run.controller.signal,
-          permissions: { autoAllow: ['read'], approve: request => new Promise<boolean>(resolve => {
-            if (run.controller.signal.aborted) { resolve(false); return }
-            const id = randomUUID()
-            const timer = setTimeout(() => { if (run.pending?.id === id) { run.pending = undefined; resolve(false) } }, opts.approvalTimeoutMs ?? 120_000)
-            run.pending = { id, resolve: allowed => { clearTimeout(timer); resolve(allowed) } }
-            send({ type: 'approval', approval: { ...request, id } })
-          }) },
-          onText: text => send({ type: 'text', text }),
-          onContextCompacted: info => send({ type: 'context-compacted', originalChars: info.originalChars, requestChars: info.requestChars, archivedMessages: info.archivedMessages }),
-          onToolCall: call => send({ type: 'tool-call', ...call }),
-          onToolResult: result => send({ type: 'tool-result', ...result }),
-        })
-        session.history = result.messages
-        send({ type: 'done', reason: result.finishReason })
-      } catch {
-        // SDK errors may include upstream request headers or bodies; do not echo them.
-        send({ type: 'error', message: run.controller.signal.aborted ? 'Run stopped' : 'The model run failed. Check host configuration and retry.' })
-      } finally {
-        clearInterval(heartbeat)
-        abort()
-        session.busy = false
-        runs.delete(runId)
-        res.end()
-      }
+      })
+      res.on('close', () => { if (active) eng.send({ type: 'cancel' }) })
+      eng.send({ type: 'run', prompt: body.prompt.trim(), model: model.id, sessionId })
       return
     }
     if (req.method !== 'GET') throw new HttpError(405, 'Method not allowed')
@@ -163,7 +148,8 @@ export function createHost(opts: HostOptions) {
       return origin
     },
     async close() {
-      for (const run of runs.values()) { run.controller.abort(); run.pending?.resolve(false) }
+      if (active) engine?.send({ type: 'cancel' })
+      engine?.close()
       server.closeAllConnections()
       await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
     },

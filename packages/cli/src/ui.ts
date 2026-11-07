@@ -1,5 +1,9 @@
+import { plainText } from '@oqelira/core'
+
 const enabled = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR
-const wrap = (open: number, close: number) => (s: string) => (enabled ? `\x1b[${open}m${s}\x1b[${close}m` : s)
+// Content passes through plainText first, so model- or file-sourced text can never carry its own escape
+// sequences; only the codes added here reach the terminal. Never nest one style helper inside another.
+const wrap = (open: number, close: number) => (s: string) => (enabled ? `\x1b[${open}m${plainText(s)}\x1b[${close}m` : plainText(s))
 
 export const dim = wrap(2, 22)
 export const bold = wrap(1, 22)

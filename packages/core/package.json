@@ -6,7 +6,7 @@
   "main": "src/index.ts",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test test/provider.test.ts test/loop.test.ts test/search.test.ts test/changes.test.ts",
+    "test": "node --import tsx --test test/provider.test.ts test/loop.test.ts test/search.test.ts test/changes.test.ts test/web.test.ts test/memory.test.ts test/safe-text.test.ts test/permissions.test.ts test/env.test.ts",
     "live": "node --env-file=../../.env --import tsx scripts/live-check.ts"
   },
   "dependencies": {

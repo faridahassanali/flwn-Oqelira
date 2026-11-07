@@ -1,4 +1,5 @@
-import { app, BrowserWindow, dialog } from 'electron'
+import { app, BrowserWindow, dialog, session } from 'electron'
+import { randomBytes } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
 import { readFileSync } from 'node:fs'
@@ -7,10 +8,12 @@ const canvasColor = readFileSync(new URL('../ui/src/tokens.css', import.meta.url
 
 let host
 let origin
+// Fresh secret per launch: the host refuses any request that lacks it, so only this app can use it.
+const launchToken = randomBytes(32).toString('hex')
 async function startHost() {
   host = spawn(process.execPath, ['--import', 'tsx', 'packages/host/src/main.ts'], {
     cwd: fileURLToPath(new URL('../../', import.meta.url)),
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', OQELIRA_PORT: '0' },
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', OQELIRA_PORT: '0', OQELIRA_LAUNCH_TOKEN: launchToken },
     stdio: ['ignore', 'ignore', 'pipe', 'ipc'], windowsHide: true,
   })
   // Do not display provider diagnostics or environment values in the renderer.
@@ -21,7 +24,9 @@ async function startHost() {
     host.once('exit', () => { clearTimeout(timer); reject(new Error('Local host stopped')) })
     host.on('message', message => {
       if (message?.type !== 'ready' || typeof message.origin !== 'string' || !/^http:\/\/127\.0\.0\.1:\d+$/.test(message.origin)) return
-      clearTimeout(timer); resolve(message.origin)
+      clearTimeout(timer)
+      session.defaultSession.webRequest.onBeforeSendHeaders({ urls: [`${message.origin}/*`] }, (details, callback) => callback({ requestHeaders: { ...details.requestHeaders, 'X-Oqelira-Launch': launchToken } }))
+      resolve(message.origin)
     })
   })
 }
