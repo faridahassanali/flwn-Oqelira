@@ -5,7 +5,7 @@ import { renderApproval } from './approval.js'
 import { createEngine, serve } from '@oqelira/engine'
 import type { Engine } from '@oqelira/engine'
 import { LineReader } from './lines.js'
-import { bold, cyan, dim, green, red, yellow } from './ui.js'
+import { bold, cyan, dim, green, playStartup, red, yellow } from './ui.js'
 
 const USAGE = `oqelira - AI coding agent by Flwn
 
@@ -214,7 +214,8 @@ async function main(): Promise<number> {
   }
 
   // ---- interactive session
-  out(`${bold('oqelira')} ${dim(`model ${engine.model.id} (${engine.model.api}) | ${cwd}`)}\n${dim(SESSION_HELP)}\n`)
+  await playStartup()
+  out(`${bold('Oqelira')} ${dim(`by Flwn · model ${engine.model.id} (${engine.model.api}) | ${cwd}`)}\n${dim(SESSION_HELP)}\n`)
   const pending = engine.memory ? (await engine.memories(500)).filter((m) => m.status === 'pending').length : 0
   if (pending) out(`${yellow(`${pending} proposed ${pending === 1 ? 'memory awaits' : 'memories await'} your review:`)} ${dim('/memory, then /memory approve <id|all>')}\n`)
   const restored = (await engine.history()).length
