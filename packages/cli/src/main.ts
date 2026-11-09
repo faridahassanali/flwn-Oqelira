@@ -7,6 +7,7 @@ import type { Engine } from '@oqelira/engine'
 import { LineReader } from './lines.js'
 import { bold, collapsePreviousLine, cyan, dim, green, playStartup, red, terminalEnabled, yellow } from './ui.js'
 import { StepLog, stepDetails, stepSummary } from './steps.js'
+import { StepRail } from './rail.js'
 
 const USAGE = `oqelira - AI coding agent by Flwn
 
@@ -139,6 +140,7 @@ async function main(): Promise<number> {
 
   let current: AbortController | null = null
   const steps = new StepLog()
+  const rail = new StepRail()
   lines.rl.on('SIGINT', () => {
     if (current) {
       current.abort()
@@ -150,6 +152,12 @@ async function main(): Promise<number> {
   async function runTurn(prompt: string): Promise<boolean> {
     current = new AbortController()
     let reason = ''
+    const closeRail = () => {
+      if (rail.active) {
+        ensureNewline()
+        out(`${dim(rail.end())}\n`)
+      }
+    }
     try {
       const result = await engine.run(prompt, {
         signal: current.signal,
@@ -169,28 +177,30 @@ async function main(): Promise<number> {
             case 'tool-call':
               ensureNewline()
               steps.start(e.id, e.name, engine.describe(e.name, e.input))
-              out(`${cyan('>')} ${dim(engine.describe(e.name, e.input))}\n`)
+              out(`${dim(rail.begin())}${cyan('>')} ${dim(engine.describe(e.name, e.input))}\n`)
               break
             case 'tool-result':
               {
                 const canCollapse = terminalEnabled && steps.activeCount() === 1
                 const step = steps.finish(e.id, e.output, e.isError)
                 if (!step) {
-                  out(`${e.isError ? red('  x ') : dim('  ok ')}${dim(oneLine(e.output))}\n`)
+                  out(`${dim(rail.item())}${e.isError ? red('x ') : dim('ok ')}${dim(oneLine(e.output))}\n`)
                   break
                 }
                 if (canCollapse) collapsePreviousLine()
                 if (canCollapse) {
-                  out(`${e.isError ? red('x ') : dim('ok ')}${dim(stepSummary(step))}\n`)
+                  out(`${dim(rail.item())}${e.isError ? red('x ') : dim('ok ')}${dim(stepSummary(step))}\n`)
                   break
                 }
-                out(`${e.isError ? red('  x ') : dim('  ok ')}${dim(oneLine(e.output))}\n`)
+                out(`${dim(rail.item())}${e.isError ? red('x ') : dim('ok ')}${dim(oneLine(e.output))}\n`)
               }
               break
             case 'done':
               reason = e.reason
+              closeRail()
               break
             case 'error':
+              closeRail()
               ensureNewline()
               out(e.message === 'Run stopped' ? `${yellow('(interrupted)')}\n` : `${red(`error: ${e.message}`)}\n`)
               break
@@ -203,6 +213,7 @@ async function main(): Promise<number> {
       if (reason === 'other') out(`${yellow('The model stream ended without a completion signal. Review the output before continuing.')}\n`)
       return result.ok
     } finally {
+      closeRail()
       current = null
     }
   }
@@ -278,6 +289,7 @@ async function main(): Promise<number> {
       await saveSessionMemory()
       await engine.clear()
       steps.clear()
+      if (rail.active) out(`${dim(rail.end())}\n`)
       out(`${dim('conversation cleared')}\n`)
       continue
     }
