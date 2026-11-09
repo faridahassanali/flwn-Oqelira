@@ -16,7 +16,7 @@ export const runCommand: Tool = {
   spec: {
     name: 'run_command',
     description:
-      'Run one focused shell command in the workspace root and return combined stdout/stderr plus exit code. Use to inspect, build, test, or verify work; commands require approval and may change files.',
+      'Run one focused shell command from the workspace root; returns combined stdout/stderr and the exit code. Use it to build, test, or verify. Commands require approval and may change files.',
     parameters: {
       type: 'object',
       properties: {
