@@ -86,6 +86,8 @@ are initial defaults, not a complete billing or tenant-resource accounting syste
 The local development Docker runner is not a production isolation proof. Disk
 quotas, idle workspace reclamation, resource monitoring, runner recovery, container
 escape testing and backup/restore drills must be completed on the target platform.
+See [sandbox validation record](sandbox-validation.md) for the preliminary WSL
+results and the production gate.
 No server/Foundry secrets are passed into a worker. Do not put secrets in project
 notes or upload sensitive environment files.
 
