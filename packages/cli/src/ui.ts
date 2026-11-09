@@ -57,6 +57,12 @@ export function createTerminalUi(opts: { enabled: boolean; background?: Backgrou
 const ui = createTerminalUi({ enabled: Boolean(process.stdout.isTTY) && !process.env.NO_COLOR, background: backgroundFrom(process.env) })
 
 export const { bold, dim, red, green, yellow, cyan } = ui
+export const terminalEnabled = ui.enabled
+
+/** Replace the live line immediately above the cursor; never emit ANSI in plain output. */
+export function collapsePreviousLine(output: Pick<NodeJS.WriteStream, 'write'> = process.stdout): void {
+  if (ui.enabled) output.write('\x1b[1A\r\x1b[2K')
+}
 
 /** A calm logo reveal. Never writes terminal control sequences to pipes or NO_COLOR output. */
 export async function playStartup(output: Pick<NodeJS.WriteStream, 'write'> = process.stdout, terminal: Pick<TerminalUi, 'enabled' | 'startupFrames'> = ui): Promise<void> {

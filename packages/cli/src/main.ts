@@ -5,7 +5,8 @@ import { renderApproval } from './approval.js'
 import { createEngine, serve } from '@oqelira/engine'
 import type { Engine } from '@oqelira/engine'
 import { LineReader } from './lines.js'
-import { bold, cyan, dim, green, playStartup, red, yellow } from './ui.js'
+import { bold, collapsePreviousLine, cyan, dim, green, playStartup, red, terminalEnabled, yellow } from './ui.js'
+import { StepLog, stepDetails, stepSummary } from './steps.js'
 
 const USAGE = `oqelira - AI coding agent by Flwn
 
@@ -33,7 +34,7 @@ In the session:  /model <id>   /clear   /help   /exit      Ctrl+C interrupts a r
 Project rules are read from OQELIRA.md (or AGENTS.md) in the project directory.
 `
 
-const SESSION_HELP = '/model <id>  switch model   /memory  list project memory (/memory approve <id|all>, /memory forget <id>)   /clear  forget saved conversation   /exit  quit   Ctrl+C  interrupt'
+const SESSION_HELP = '/model <id>  switch model   /memory  list project memory (/memory approve <id|all>, /memory forget <id>)   /steps  expand completed steps   /step <n>  expand one step   /clear  forget saved conversation   /exit  quit   Ctrl+C  interrupt'
 
 function oneLine(text: string, max = 110): string {
   const first = text.split(/\r?\n/).find((l) => l.trim()) ?? ''
@@ -137,6 +138,7 @@ async function main(): Promise<number> {
   }
 
   let current: AbortController | null = null
+  const steps = new StepLog()
   lines.rl.on('SIGINT', () => {
     if (current) {
       current.abort()
@@ -166,10 +168,24 @@ async function main(): Promise<number> {
               break
             case 'tool-call':
               ensureNewline()
+              steps.start(e.id, e.name, engine.describe(e.name, e.input))
               out(`${cyan('>')} ${dim(engine.describe(e.name, e.input))}\n`)
               break
             case 'tool-result':
-              out(`${e.isError ? red('  x ') : dim('  ok ')}${dim(oneLine(e.output))}\n`)
+              {
+                const canCollapse = terminalEnabled && steps.activeCount() === 1
+                const step = steps.finish(e.id, e.output, e.isError)
+                if (!step) {
+                  out(`${e.isError ? red('  x ') : dim('  ok ')}${dim(oneLine(e.output))}\n`)
+                  break
+                }
+                if (canCollapse) collapsePreviousLine()
+                if (canCollapse) {
+                  out(`${e.isError ? red('x ') : dim('ok ')}${dim(stepSummary(step))}\n`)
+                  break
+                }
+                out(`${e.isError ? red('  x ') : dim('  ok ')}${dim(oneLine(e.output))}\n`)
+              }
               break
             case 'done':
               reason = e.reason
@@ -230,6 +246,17 @@ async function main(): Promise<number> {
       out(`${dim(SESSION_HELP)}\n`)
       continue
     }
+    if (text === '/steps') {
+      const all = steps.all()
+      out(all.length ? all.map(step => `${dim(`[${step.index}]`)} ${plainText(stepSummary(step))}`).join('\n') + '\n' : `${dim('no completed steps yet')}\n`)
+      continue
+    }
+    if (text.startsWith('/step')) {
+      const index = Number(text.split(/\s+/)[1])
+      const step = Number.isInteger(index) && index > 0 ? steps.get(index) : undefined
+      out(step ? `${plainText(stepDetails(step))}\n` : `${dim('unknown step. use /steps or /step <n>')}\n`)
+      continue
+    }
     if (text === '/memory' || text.startsWith('/memory ')) {
       const [, action, id] = text.split(/\s+/)
       if (action === 'forget') {
@@ -250,6 +277,7 @@ async function main(): Promise<number> {
     if (text === '/clear') {
       await saveSessionMemory()
       await engine.clear()
+      steps.clear()
       out(`${dim('conversation cleared')}\n`)
       continue
     }
