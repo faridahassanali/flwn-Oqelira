@@ -7,7 +7,7 @@ import { spawnEngine } from '@oqelira/engine/client'
 import type { EngineClient } from '@oqelira/engine/client'
 import { readFileChange, applyFileChange } from '@oqelira/core'
 import type { Approval, EngineMessage } from '@oqelira/protocol'
-import { engineEnv, foundryEndpoint, proposedContent, rememberable, secretName } from './policy.js'
+import { engineEnv, foundryEndpoint, gatewayEngineEnv, gatewaySecret, gatewayUrl, proposedContent, rememberable, secretName } from './policy.js'
 import type { Setup } from './policy.js'
 
 /**
@@ -33,19 +33,31 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   async function engineFor(cwd: string): Promise<EngineClient | undefined> {
+    const gwUrl = context.globalState.get<string>('oqelira.gatewayUrl')
+    const gwToken = gwUrl ? await context.secrets.get(gatewaySecret) : undefined
     const setup = context.globalState.get<Setup>('oqelira.setup')
-    if (!setup) { void vscode.window.showInformationMessage('Run Oqelira: Configure Foundry first.'); return }
-    let endpoint: string
-    try { endpoint = foundryEndpoint(setup.endpoint) } catch { void vscode.window.showErrorMessage('Reconfigure the Foundry endpoint.'); return }
-    const key = await context.secrets.get(secretName(endpoint))
-    if (!key) { void vscode.window.showInformationMessage('Run Oqelira: Configure Foundry to save your key.'); return }
-    const identity = cwd + JSON.stringify(setup) + key
+    if (!(gwUrl && gwToken) && !setup) { void vscode.window.showInformationMessage('Run Oqelira: Configure Foundry first.'); return }
+    let env: (() => NodeJS.ProcessEnv) | undefined
+    let identity = ''
+    if (gwUrl && gwToken) {
+      try { gatewayUrl(gwUrl) } catch { void vscode.window.showErrorMessage('Reconfigure the gateway URL.'); return }
+      env = () => gatewayEngineEnv(process.env, gwUrl, gwToken)
+      identity = cwd + gwUrl + gwToken
+    } else if (setup) {
+      let endpoint: string
+      try { endpoint = foundryEndpoint(setup.endpoint) } catch { void vscode.window.showErrorMessage('Reconfigure the Foundry endpoint.'); return }
+      const key = await context.secrets.get(secretName(endpoint))
+      if (!key) { void vscode.window.showInformationMessage('Run Oqelira: Configure Foundry to save your key.'); return }
+      env = () => engineEnv(process.env, setup, key)
+      identity = cwd + JSON.stringify(setup) + key
+    }
+    if (!env) return
     const existing = engines.get(cwd)
     if (existing && !existing.client.closed && existing.key === identity) return existing.client
     existing?.client.close()
     const bin = enginePath()
     if (!existsSync(bin)) { void vscode.window.showErrorMessage('Oqelira engine not found. Set oqelira.enginePath in your user settings.'); return }
-    const client = spawnEngine({ cwd, bin, env: engineEnv(process.env, setup, key) })
+    const client = spawnEngine({ cwd, bin, env: env() })
     try { await client.ready } catch { void vscode.window.showErrorMessage('Oqelira engine did not start. Check your Node runtime and configuration.'); client.close(); return }
     engines.set(cwd, { client, key: identity })
     return client
@@ -178,6 +190,20 @@ export function activate(context: vscode.ExtensionContext) {
     finally { runningAbort = undefined }
   })
 
+  register('oqelira.configureGateway', async () => {
+    if (runningAbort) { void vscode.window.showWarningMessage('Stop the current run before changing credentials.'); return }
+    const urlInput = await vscode.window.showInputBox({ title: 'Oqelira gateway URL', prompt: 'HTTPS URL of your organization gateway. Saved in your user profile only. Leave empty to go back to direct Foundry.', ignoreFocusOut: true })
+    if (urlInput === undefined) return
+    if (!urlInput.trim()) { await context.globalState.update('oqelira.gatewayUrl', undefined); await context.secrets.delete(gatewaySecret); stopEngines(); return }
+    let url: string
+    try { url = gatewayUrl(urlInput) } catch { void vscode.window.showErrorMessage('Use a valid HTTPS gateway URL.'); return }
+    const token = await vscode.window.showInputBox({ title: 'Oqelira gateway token', prompt: 'Stored in VS Code SecretStorage, never in workspace settings.', password: true, ignoreFocusOut: true })
+    if (!token) return
+    await context.secrets.store(gatewaySecret, token.trim())
+    await context.globalState.update('oqelira.gatewayUrl', url)
+    stopEngines()
+    void vscode.window.showInformationMessage('Oqelira gateway configuration saved.')
+  })
   register('oqelira.configure', async () => {
     if (runningAbort) { void vscode.window.showWarningMessage('Stop the current run before changing credentials.'); return }
     const endpointInput = await vscode.window.showInputBox({ title: 'Azure Foundry endpoint', prompt: 'HTTPS endpoint for your existing Foundry resource. Saved in your user profile only.', ignoreFocusOut: true })

@@ -5,6 +5,27 @@ export function foundryEndpoint(value: string): string {
 }
 export function secretName(endpoint:string):string {return 'oqelira.foundry:'+new URL(endpoint).origin}
 
+export const gatewaySecret = 'oqelira.gateway-token'
+export function gatewayUrl(value: string): string {
+  const url = new URL(value.trim())
+  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) throw new Error('Use an HTTPS gateway URL without credentials')
+  return url.origin
+}
+
+/** Gateway mode: only the user token reaches the engine. No Foundry key, endpoint or deployment is passed or read. */
+export function gatewayEngineEnv(base: NodeJS.ProcessEnv, url: string, token: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {}
+  for (const [k, v] of Object.entries(base)) if (!/^(FOUNDRY_|OQELIRA_)/.test(k)) env[k] = v
+  return {
+    ...env,
+    ELECTRON_RUN_AS_NODE: '1',
+    OQELIRA_GATEWAY_URL: gatewayUrl(url),
+    OQELIRA_GATEWAY_TOKEN: token,
+    ...(base.OQELIRA_HOME ? { OQELIRA_HOME: base.OQELIRA_HOME } : {}),
+    ...(base.TAVILY_API_KEY ? { TAVILY_API_KEY: base.TAVILY_API_KEY } : {}),
+  }
+}
+
 export interface Setup { endpoint:string; model:{id:string;deployment:string;api:'responses'|'chat';speed:string} }
 
 /**

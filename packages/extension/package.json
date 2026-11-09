@@ -36,6 +36,10 @@
         "title": "Oqelira: Configure Foundry"
       },
       {
+        "command": "oqelira.configureGateway",
+        "title": "Oqelira: Configure Gateway"
+      },
+      {
         "command": "oqelira.clear",
         "title": "Oqelira: New Conversation"
       },
