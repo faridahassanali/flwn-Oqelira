@@ -76,7 +76,10 @@ export function createCloudServer(opts: Options) {
       if (req.method === 'POST' && url.pathname === '/api/gateway/token') {
         const data = await body(req), org = text(data.organizationId, 128), device = text(data.deviceId, 128)
         // Only the caller's own identity, and only organizations they belong to.
-        if (!(await opts.store.organizations(user)).some(team => team.id === org)) throw new HttpError(403, 'Not a member of this organization')
+        const membership = (await opts.store.organizations(user)).find(team => team.id === org)
+        if (!membership) throw new HttpError(403, 'Not a member of this organization')
+        // Same gate as starting a run: a token spends model quota, so viewers do not get one.
+        if (!mayWrite(membership.role)) throw new HttpError(403, 'Your team role cannot use the model gateway')
         if (await isRevoked(gw.db, user)) throw new HttpError(403, 'Gateway access revoked')
         const ttl = gw.ttlSeconds ?? 900
         reply(res, 200, { token: issueToken({ sub: user, org, dev: device }, gw.tokenKey, ttl), expiresIn: ttl }); return

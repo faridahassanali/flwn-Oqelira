@@ -38,6 +38,8 @@ test('gateway token issuer: sign-in, own orgs only, revocation',{timeout:90000},
   assert.ok(claims);assert.equal(claims.sub,alice.id);assert.equal(claims.org,org.id);assert.equal(claims.dev,'d1')
   assert.ok(claims.exp*1000-Date.now()<=900_000)
   assert.equal(verifyToken(token,Buffer.from('x'.repeat(40))),null)
+  await pool.query('INSERT INTO member (id,"organizationId","userId",role,"createdAt") VALUES ($1,$2,$3,$4,now())',['m-viewer',org.id,bob.id,'viewer'])
+  assert.equal((await request('/api/gateway/token',bob.cookie,{organizationId:org.id,deviceId:'d1'})).status,403)
   assert.equal((await request('/api/gateway/revoke','',{})).status,401)
   assert.equal((await request('/api/gateway/revoke',alice.cookie)).status,200)
   assert.equal(await isRevoked(gwDb,alice.id),true);assert.equal(await isRevoked(gwDb,bob.id),false)
