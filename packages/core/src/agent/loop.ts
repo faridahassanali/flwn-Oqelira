@@ -95,11 +95,11 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
 
     const results: ToolResult[] = []
     messages.push({ role: 'tool', results })
+    const readCalls = calls.filter((call) => toolMap.get(call.name)?.risk === 'read')
+    const ready = new Map<string, ToolResult>(await Promise.all(readCalls.map(async (call) => [call.id, await executeTool(call, toolMap, permissions, opts)] as const)))
     for (const call of calls) {
-      const result = await executeTool(call, toolMap, permissions, opts)
-      opts.onToolResult?.(result)
-      results.push(result)
-      await opts.onCheckpoint?.(messages)
+      const result = ready.get(call.id) ?? await executeTool(call, toolMap, permissions, opts)
+      opts.onToolResult?.(result); results.push(result); await opts.onCheckpoint?.(messages)
     }
   }
 
