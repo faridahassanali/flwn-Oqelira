@@ -8,6 +8,7 @@ import {serverConfig} from '../src/config.js'
 import {migrate} from '../src/migrate.js'
 import {createAuth} from '../src/auth.js'
 import {Store} from '../src/store.js'
+import {PostgresRunChannel} from '../src/channel.js'
 import {createCloudServer} from '../src/server.js'
 
 async function* events(response:Response){
@@ -23,7 +24,7 @@ test('dropped streams reconnect through durable events without repeating model c
  const config=serverConfig({OQELIRA_SERVER_URL:`http://127.0.0.1:${port}`,OQELIRA_AUTH_SECRET:'a52a03ac0f6e141d311d8ae6a7ad01c10d5770fcaeb9e31c',OQELIRA_DATABASE_URL:'postgres://fixture',OQELIRA_ALLOW_SIGNUP:'true'})
  await migrate(pool,config)
  let calls=0
- const server=createCloudServer({auth:createAuth(pool,config),store:new Store(pool),sandbox:{tools:()=>[]},origin:config.baseURL,dist:'.',models:[{id:'fixture',deployment:'fixture',api:'chat',speed:'fast'}],provider:()=>({id:'fixture',async *stream(request){calls++;if(request.messages.at(-1)?.role==='user'){yield{type:'tool-call',call:{id:'memory',name:'remember_project',input:{content:'remembered once'}}};yield{type:'finish',reason:'tool-calls'}}else{yield{type:'text-delta',text:'Saved once'};yield{type:'finish',reason:'stop'}}}})})
+ const server=createCloudServer({auth:createAuth(pool,config),store:new Store(pool),channel:await PostgresRunChannel.open(pool,(c,cb)=>db.listen(c,cb)),sandbox:{tools:()=>[]},origin:config.baseURL,dist:'.',models:[{id:'fixture',deployment:'fixture',api:'chat',speed:'fast'}],provider:()=>({id:'fixture',async *stream(request){calls++;if(request.messages.at(-1)?.role==='user'){yield{type:'tool-call',call:{id:'memory',name:'remember_project',input:{content:'remembered once'}}};yield{type:'finish',reason:'tool-calls'}}else{yield{type:'text-delta',text:'Saved once'};yield{type:'finish',reason:'stop'}}}})})
  await server.listen(port)
  const request=(route:string,cookie='',data?:unknown)=>fetch(config.baseURL+route,{headers:{Origin:config.baseURL,Cookie:cookie,...(data===undefined?{}:{'Content-Type':'application/json'})},...(data===undefined?{}:{method:'POST',body:JSON.stringify(data)})})
  const signup=async(email:string)=>{const response=await request('/api/auth/sign-up/email','',{name:'Fixture',email,password:'Temporary test password 2026!'});assert.equal(response.status,200);return response.headers.getSetCookie().map(value=>value.split(';')[0]).join('; ')}
