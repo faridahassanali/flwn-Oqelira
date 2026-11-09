@@ -23,6 +23,7 @@
     "sandbox": "node --env-file=.env.server --import tsx packages/server/src/runner.ts",
     "worker:build": "docker build -t oqelira-worker:local -f packages/worker/Dockerfile .",
     "foundry:check": "node --import tsx packages/core/scripts/check-connection.ts",
+    "classifier:eval": "node --import tsx packages/engine/scripts/evaluate-classifier.ts",
     "extension:build": "npm run build -w oqelira-vscode",
     "extension:package": "npm run package -w oqelira-vscode"
   }
