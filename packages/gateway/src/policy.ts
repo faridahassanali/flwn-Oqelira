@@ -58,12 +58,13 @@ export function violatesSchema(value: unknown, schema: JsonSchema): boolean {
     return !!items && value.some((v) => violatesSchema(v, items))
   }
   if (value !== null && typeof value === 'object') {
+    // Own keys only: `in` and bracket lookup also see inherited names such as "constructor" or "toString".
     const props = (schema.properties ?? {}) as Record<string, JsonSchema>
     const obj = value as Record<string, unknown>
-    if (((schema.required ?? []) as string[]).some((k) => !(k in obj))) return true
+    if (((schema.required ?? []) as string[]).some((k) => !Object.hasOwn(obj, k))) return true
     for (const [k, v] of Object.entries(obj)) {
-      if (props[k] !== undefined) {
-        if (violatesSchema(v, props[k])) return true
+      if (Object.hasOwn(props, k)) {
+        if (violatesSchema(v, props[k] as JsonSchema)) return true
       } else if (schema.additionalProperties === false) return true
     }
   }

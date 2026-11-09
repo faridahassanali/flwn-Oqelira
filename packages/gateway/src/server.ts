@@ -14,6 +14,11 @@ import { verifyToken } from './tokens.js'
  */
 const HOLD_BACK = 512
 const MAX_BODY = 256 * 1024
+/**
+ * Concurrent requests per user. Quota is read before a request is recorded, so parallel requests could all pass
+ * the same check. Capping in-flight work bounds that overshoot to this many requests. Per replica only.
+ */
+const MAX_IN_FLIGHT = 2
 
 export interface GatewayDeps {
   db: Db
@@ -42,8 +47,9 @@ const refuse = (status: number, error: string, body: Record<string, unknown> = {
 /** Multi-tenant model gateway: one endpoint, streams NDJSON events, every decision logged without content. */
 export function createGatewayServer(deps: GatewayDeps): Server {
   const now = deps.now ?? Date.now
+  const inFlight = new Map<string, number>()
   return createServer((req, res) => {
-    handle(deps, now, req, res).catch(() => {
+    handle(deps, now, inFlight, req, res).catch(() => {
       // Only reached for bugs outside the guarded paths. Nothing is forwarded from here.
       if (!res.headersSent) send(res, 500, { error: 'Gateway error' })
       else res.end()
@@ -51,12 +57,22 @@ export function createGatewayServer(deps: GatewayDeps): Server {
   })
 }
 
-async function handle(d: GatewayDeps, now: () => number, req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handle(d: GatewayDeps, now: () => number, inFlight: Map<string, number>, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://gateway')
   if (req.method !== 'POST' || url.pathname !== '/v1/model/stream') return send(res, 404, { error: 'Not found' })
 
   const claims = verifyToken(bearer(req) ?? '', d.config.tokenKey, now())
   if (!claims) return send(res, 401, { error: 'Invalid or expired token' })
+
+  const open = inFlight.get(claims.sub) ?? 0
+  if (open >= MAX_IN_FLIGHT) return send(res, 429, { error: 'Too many concurrent requests' }, { 'Retry-After': '1' })
+  inFlight.set(claims.sub, open + 1)
+  // 'close' fires after the response ends or the client goes away, so the slot is always released.
+  res.once('close', () => {
+    const n = (inFlight.get(claims.sub) ?? 1) - 1
+    if (n > 0) inFlight.set(claims.sub, n)
+    else inFlight.delete(claims.sub)
+  })
 
   let request: Request
   let warnings: string[]
@@ -140,7 +156,8 @@ async function forward(d: GatewayDeps, ctx: Context, request: Request, warnings:
         blocked = scanSecrets(text, d.knownSecrets)
         if (!blocked) flush(false)
       } else if (e.type === 'tool-call') {
-        blocked = checkToolCall(e.call, request.tools ?? [])
+        // Tool input leaves the gateway as an event too, so it gets the same secret scan as text.
+        blocked = checkToolCall(e.call, request.tools ?? []) ?? scanSecrets(JSON.stringify(e.call), d.knownSecrets)
         if (!blocked) { flush(true); toolCalls.push(e.call.input ?? null); write(e) }
       } else if (e.type === 'finish') {
         flush(true)
