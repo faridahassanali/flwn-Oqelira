@@ -10,7 +10,7 @@
   ],
   "scripts": {
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test -w @oqelira/core -w @oqelira/engine -w @oqelira/cli -w @oqelira/host -w @oqelira/server -w @oqelira/worker -w oqelira-vscode",
+    "test": "npm run test -w @oqelira/core -w @oqelira/engine -w @oqelira/cli -w @oqelira/host -w @oqelira/server -w @oqelira/gateway -w @oqelira/worker -w oqelira-vscode",
     "live": "npm run live -w @oqelira/core",
     "oqelira": "node packages/cli/bin/oqelira.mjs",
     "desktop": "npm run start -w @oqelira/desktop",
@@ -18,6 +18,7 @@
     "setup:server": "node --import tsx scripts/setup-server.ts",
     "security:staged": "node --import tsx scripts/check-staged-secrets.ts",
     "server": "node --env-file=.env.server --import tsx packages/server/src/main.ts",
+    "gateway": "node --env-file=.env.gateway --import tsx packages/gateway/src/main.ts",
     "db:migrate": "node --env-file=.env.server --import tsx packages/server/src/migrate.ts",
     "db:start": "docker compose --env-file .env.server -f deploy/compose.dev.yml up -d db",
     "sandbox": "node --env-file=.env.server --import tsx packages/server/src/runner.ts",
