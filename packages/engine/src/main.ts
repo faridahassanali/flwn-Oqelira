@@ -9,6 +9,7 @@ Options:
       --cwd <dir>             project directory (default: current directory)
   -y, --yes                   auto-approve file writes
       --yolo                  auto-approve everything (use with care)
+      --auto                  let the configured decision model approve safe shell commands
       --max-steps <n>         stop a run after n model steps (default 25)
       --env-file <f>          extra .env file
       --no-history            do not store sessions on disk
@@ -28,6 +29,7 @@ async function main(): Promise<number> {
         cwd: { type: 'string' },
         yes: { type: 'boolean', short: 'y' },
         yolo: { type: 'boolean' },
+        auto: { type: 'boolean' },
         'max-steps': { type: 'string' },
         'env-file': { type: 'string' },
         'approval-timeout-ms': { type: 'string' },
@@ -60,6 +62,7 @@ async function main(): Promise<number> {
       model: values.model,
       yes: values.yes,
       yolo: values.yolo,
+      auto: values.auto,
       maxSteps: positive('max-steps') ?? 25,
       persistHistory: !values['no-history'],
       autoMemory: !values['no-auto-memory'],

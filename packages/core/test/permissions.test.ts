@@ -19,3 +19,16 @@ test('decide runs before the approver: allow skips it, deny blocks without askin
 test('decide never overrides fail-closed: no approver and no decision means denied', async () => {
   assert.equal((await checkPermission({ autoAllow: ['read'], decide: () => undefined }, req)).allowed, false)
 })
+
+test('alwaysAsk overrides auto-allow and carries its reason into the approval prompt', async () => {
+  let seen: ApprovalRequest | undefined
+  const result = await checkPermission({ autoAllow: ['exec'], alwaysAsk: () => 'network egress', approve: async value => { seen = value; return true } }, req)
+  assert.equal(result.allowed, true)
+  assert.equal(seen?.reason, 'network egress')
+})
+
+test('a classifier ask reason is shown to the approver', async () => {
+  let seen: ApprovalRequest | undefined
+  await checkPermission({ autoAllow: ['read'], decide: () => ({ decision: undefined, reason: 'classifier: may change files' }), approve: async value => { seen = value; return true } }, req)
+  assert.equal(seen?.reason, 'classifier: may change files')
+})

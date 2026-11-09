@@ -23,6 +23,7 @@ import { openRules } from './rules.js'
 import { noStore, openSessionStore } from './store.js'
 import type { SessionInfo, SessionStore, Snapshot } from './store.js'
 import { UsageTracker, usageLimitsFromEnv } from './usage.js'
+import { classifyCommand, hardDenyReason } from './classifier.js'
 
 export interface EngineOptions {
   cwd: string
@@ -43,6 +44,8 @@ export interface EngineOptions {
   maxContinues?: number
   /** Auto-mode hook: consulted after saved rules, before the user is asked. */
   decide?: Permissions['decide']
+  /** Let the configured decision model approve safe shell commands. */
+  auto?: boolean
 }
 
 export interface RunIO {
@@ -107,6 +110,8 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
   const models = modelsFromEnv()
   let model = findModel(opts.model ?? process.env.OQELIRA_MODEL ?? 'gpt-6-sol', models)
   const makeProvider = createFoundry(config)
+  const decisionModelId = process.env.OQELIRA_DECISION_MODEL?.trim()
+  const decisionProvider = opts.auto && decisionModelId ? makeProvider(findModel(decisionModelId, models)) : undefined
 
   // Project memory is on only when an embedding deployment is configured (never hardcoded).
   let memory: ContextGateway | undefined
@@ -121,7 +126,12 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
   const tools: Tool[] = [...builtinTools, ...webTools(), ...(memory ? memoryTools(memory) : [])]
   const autoAllow: Risk[] = ['read', ...(opts.yes || opts.yolo ? (['write'] as Risk[]) : []), ...(opts.yolo ? (['exec', 'network'] as Risk[]) : [])]
   const rules = openRules(cwd, stateRoot)
-  const decide: Permissions['decide'] = (req) => (rules.allows(req) ? 'allow' : opts.decide?.(req))
+  const decide: Permissions['decide'] = async (req) => {
+    if (rules.allows(req)) return 'allow'
+    const custom = await opts.decide?.(req)
+    if (custom) return custom
+    return decisionProvider ? classifyCommand(decisionProvider, req) : undefined
+  }
   const system = DEFAULT_SYSTEM + readProjectRules(cwd)
   const usageLimits = usageLimitsFromEnv()
 
@@ -261,7 +271,7 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
             system: system + recalled,
             history: st.messages,
             maxSteps: opts.maxSteps,
-            permissions: { autoAllow, decide, approve: io.approve },
+            permissions: { autoAllow, alwaysAsk: hardDenyReason, decide, approve: io.approve },
             signal: io.signal,
             compact,
             beforeModelStep: () => {

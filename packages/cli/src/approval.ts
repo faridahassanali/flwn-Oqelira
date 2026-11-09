@@ -14,6 +14,7 @@ function block(prefix: string, text: string, paint: (s: string) => string): stri
 export function renderApproval(req: ApprovalRequest): string {
   const input = (req.input ?? {}) as Record<string, unknown>
   const out = [yellow(`\n? ${req.summary}`)]
+  if (req.reason) out.push(yellow(`  Why approval is required: ${req.reason}`))
   if (req.tool === 'edit_file') {
     out.push(...block('-', String(input.old_string ?? ''), red), ...block('+', String(input.new_string ?? ''), green))
   } else if (req.tool === 'save_memory' && Array.isArray(input.facts)) {

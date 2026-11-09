@@ -18,6 +18,7 @@ Options:
       --cwd <dir>       project directory (default: current directory)
   -y, --yes             auto-approve file writes/edits (commands still ask)
       --yolo            auto-approve everything, including shell commands (use with care)
+      --auto            let the configured decision model approve safe shell commands
       --max-steps <n>   stop after n model steps (default 25)
       --env-file <f>    extra .env file (only FOUNDRY_/OQELIRA_/FLWN_/DATA_ keys are read)
       --no-history      do not load or save the local interactive session history
@@ -49,6 +50,7 @@ async function main(): Promise<number> {
         cwd: { type: 'string' },
         yes: { type: 'boolean', short: 'y' },
         yolo: { type: 'boolean' },
+        auto: { type: 'boolean' },
         'max-steps': { type: 'string' },
         'env-file': { type: 'string' },
         'list-models': { type: 'boolean' },
@@ -86,6 +88,7 @@ async function main(): Promise<number> {
       model: values.model,
       yes: values.yes,
       yolo: values.yolo,
+      auto: values.auto,
       maxSteps,
       persistHistory: !values['no-history'],
       autoMemory: !values['no-auto-memory'],
