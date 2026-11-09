@@ -22,6 +22,7 @@ import { extractFacts, saveFacts, selectFacts } from './memorize.js'
 import { openRules } from './rules.js'
 import { noStore, openSessionStore } from './store.js'
 import type { SessionInfo, SessionStore, Snapshot } from './store.js'
+import { UsageTracker, usageLimitsFromEnv } from './usage.js'
 
 export interface EngineOptions {
   cwd: string
@@ -122,12 +123,14 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
   const rules = openRules(cwd, stateRoot)
   const decide: Permissions['decide'] = (req) => (rules.allows(req) ? 'allow' : opts.decide?.(req))
   const system = DEFAULT_SYSTEM + readProjectRules(cwd)
+  const usageLimits = usageLimitsFromEnv()
 
   let store: SessionStore = noStore
-  if (opts.persistHistory) {
+  if (opts.persistHistory || usageLimits.fiveHours || usageLimits.weekly) {
     try {
       store = await openSessionStore(cwd, stateRoot)
     } catch (e) {
+      if (usageLimits.fiveHours || usageLimits.weekly) throw new Error(`Usage limits unavailable: ${(e as Error).message}`)
       startupNotices.push(`Session history disabled: ${(e as Error).message}`)
     }
   }
@@ -154,6 +157,7 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
   }
   const contextChars = opts.contextChars ?? 80_000
   const maxContinues = opts.maxContinues ?? 3
+  const usage = new UsageTracker(store, usageLimits)
 
   return {
     cwd,
@@ -238,6 +242,16 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
       })
       try {
         let next = prompt
+        const warned = new Set<string>()
+        const emitUsageWarnings = () => {
+          for (const warning of usage.warnings()) {
+            const window = warning.split(' token usage')[0]!
+            if (!warned.has(window)) {
+              warned.add(window)
+              io.onEvent({ type: 'notice', message: warning })
+            }
+          }
+        }
         for (let attempt = 0; ; attempt++) {
           const result = await runAgent({
             provider,
@@ -250,6 +264,14 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
             permissions: { autoAllow, decide, approve: io.approve },
             signal: io.signal,
             compact,
+            beforeModelStep: () => {
+              usage.check()
+              emitUsageWarnings()
+            },
+            onUsage: (reported) => {
+              usage.record(model.id, reported)
+              emitUsageWarnings()
+            },
             onText: (text) => io.onEvent({ type: 'text', text }),
             onContextCompacted: (info) => io.onEvent({ type: 'context-compacted', ...info }),
             onToolCall: (call) => io.onEvent({ type: 'tool-call', id: call.id, name: call.name, input: call.input }),

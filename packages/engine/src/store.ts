@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { memoryDir } from '@oqelira/core'
 import type { Message } from '@oqelira/core'
+import type { UsageEvent, UsageStore } from './usage.js'
 
 export interface SessionInfo { id: string; title: string; model: string; createdAt: string; updatedAt: string; messages: number }
 export interface Snapshot { version: number; summary: string; /** The first `coversThrough` messages are summarized. */ coversThrough: number; createdAt: string }
@@ -12,7 +13,7 @@ export interface LoadedSession { messages: Message[]; snapshot?: Snapshot }
  * Durable sessions: the full message history (append-only) plus the latest compact snapshot.
  * Rows carry ids, hashes and a synced_at column so a later sync is a plain copy.
  */
-export interface SessionStore {
+export interface SessionStore extends UsageStore {
   list(limit?: number): SessionInfo[]
   load(id: string): LoadedSession | undefined
   /** Stores `messages[from..]` for the session; already stored positions are never rewritten. */
@@ -41,7 +42,7 @@ const titleOf = (messages: Message[]) => {
 }
 
 /** A store that remembers nothing: used when node:sqlite is unavailable or persistence is off. */
-export const noStore: SessionStore = { list: () => [], load: () => undefined, append() {}, saveSnapshot: (_i, summary, coversThrough) => ({ version: 0, summary, coversThrough, createdAt: new Date().toISOString() }), remove() {}, getMemorized: () => 0, setMemorized() {} }
+export const noStore: SessionStore = { list: () => [], load: () => undefined, append() {}, saveSnapshot: (_i, summary, coversThrough) => ({ version: 0, summary, coversThrough, createdAt: new Date().toISOString() }), remove() {}, getMemorized: () => 0, setMemorized() {}, recordUsage() {}, usageSince: () => ({ tokens: 0 }) }
 
 export async function openSessionStore(cwd: string, stateRoot?: string): Promise<SessionStore> {
   const { DatabaseSync } = await import('node:sqlite')
@@ -64,6 +65,11 @@ export async function openSessionStore(cwd: string, stateRoot?: string): Promise
       version INTEGER NOT NULL, summary TEXT NOT NULL, covers_through INTEGER NOT NULL, created_at TEXT NOT NULL,
       content_hash TEXT NOT NULL, synced_at TEXT, UNIQUE(session_id, version));
     CREATE TABLE IF NOT EXISTS memory_marks (session_id TEXT PRIMARY KEY, through INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS usage_events (
+      id TEXT PRIMARY KEY, occurred_at TEXT NOT NULL, model TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS usage_events_occurred_at ON usage_events(occurred_at);
     PRAGMA foreign_keys = ON;`)
   const deviceRow = db.prepare("SELECT value FROM meta WHERE key = 'device_id'").get() as { value: string } | undefined
   const deviceId = deviceRow?.value ?? randomUUID()
@@ -116,6 +122,13 @@ export async function openSessionStore(cwd: string, stateRoot?: string): Promise
     },
     setMemorized(id, through) {
       db.prepare('INSERT INTO memory_marks (session_id, through) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET through = excluded.through').run(id, through)
+    },
+    recordUsage(event: UsageEvent) {
+      db.prepare('INSERT INTO usage_events (id, occurred_at, model, input_tokens, output_tokens) VALUES (?, ?, ?, ?, ?)').run(randomUUID(), event.at.toISOString(), event.model, event.inputTokens, event.outputTokens)
+    },
+    usageSince(since: Date) {
+      const row = db.prepare('SELECT COALESCE(SUM(input_tokens + output_tokens), 0) AS tokens, MIN(occurred_at) AS oldest_at FROM usage_events WHERE occurred_at >= ?').get(since.toISOString()) as { tokens: number; oldest_at: string | null }
+      return { tokens: Number(row.tokens), oldestAt: row.oldest_at ? new Date(row.oldest_at) : undefined }
     },
   }
 }

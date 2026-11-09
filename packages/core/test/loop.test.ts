@@ -124,6 +124,20 @@ test('permissions: denied approval does not execute a write-risk tool', async ()
   })
 })
 
+test('agent loop reports a completed model step token usage', async () => {
+  await withWorkspace(async cwd => {
+    let usage: { inputTokens?: number; outputTokens?: number } | undefined
+    await runAgent({
+      cwd, prompt: 'answer', maxSteps: 1, tools: [], onUsage: value => { usage = value },
+      provider: { id: 'fixture', async *stream() {
+        yield { type: 'text-delta', text: 'done' }
+        yield { type: 'finish', reason: 'stop', usage: { inputTokens: 12, outputTokens: 8 } }
+      } },
+    })
+    assert.deepEqual(usage, { inputTokens: 12, outputTokens: 8 })
+  })
+})
+
 test('permissions: approver is asked with a readable summary; approving performs the write', async () => {
   await withWorkspace(async (cwd) => {
     const mock = await startMock({

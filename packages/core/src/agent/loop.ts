@@ -27,6 +27,10 @@ export interface AgentOptions {
   onText?: (delta: string) => void
   onToolCall?: (call: ToolCall) => void
   onToolResult?: (result: ToolResult) => void
+  /** Called immediately before a model request. Throw to stop before spending more tokens. */
+  beforeModelStep?: () => Promise<void> | void
+  /** Reports provider token usage after a completed model request. */
+  onUsage?: (usage: { inputTokens?: number; outputTokens?: number }) => Promise<void> | void
   /** Persist complete/partial turns without coupling core to a database. */
   onCheckpoint?: (messages: Message[]) => Promise<void>
 }
@@ -49,10 +53,12 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
 
   while (steps < maxSteps) {
     opts.signal?.throwIfAborted()
+    await opts.beforeModelStep?.()
     steps++
     let text = ''
     const calls: ToolCall[] = []
     let reason: FinishReason = 'other'
+    let usage: { inputTokens?: number; outputTokens?: number } | undefined
     const context = opts.compact ? await opts.compact(messages, opts.signal) : compactContext(messages, opts.maxContextChars)
     if (context.requestChars < context.originalChars) opts.onContextCompacted?.(context)
 
@@ -71,8 +77,10 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
         opts.onToolCall?.(ev.call)
       } else {
         reason = ev.reason
+        usage = ev.usage
       }
     }
+    if (usage) await opts.onUsage?.(usage)
 
     messages.push({ role: 'assistant', text, toolCalls: calls })
     await opts.onCheckpoint?.(messages)
