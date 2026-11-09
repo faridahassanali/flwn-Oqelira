@@ -34,10 +34,10 @@ async function harness(limits: Partial<GatewayConfig['limits']> = {}) {
   }
   await migrate(db)
   let clock = START
-  const seen = { script: (_req: ModelRequest): ModelEvent[] => [finish(1, 1)], calls: [] as ModelRequest[], models: [] as ModelConfig[] }
+  const seen = { script: (_req: ModelRequest): ModelEvent[] => [finish(1, 1)], calls: [] as ModelRequest[], models: [] as ModelConfig[], gate: null as Promise<void> | null }
   const provider = (model: ModelConfig): ModelProvider => {
     seen.models.push(model)
-    return { id: model.id, async *stream(req) { seen.calls.push(req); for (const e of seen.script(req)) yield e } }
+    return { id: model.id, async *stream(req) { seen.calls.push(req); if (seen.gate) await seen.gate; for (const e of seen.script(req)) yield e } }
   }
   const config: GatewayConfig = {
     port: 0,
@@ -228,6 +228,55 @@ test('revocation stops a user on their next request; forged and expired tokens a
     assert.equal(pinned.status, 200)
     assert.equal(h.seen.models.at(-1)?.deployment, 'dep-sol', 'client cannot choose the deployment')
     assert.equal((await h.post({ model: 'dep-sol', messages: [] }, h.token('carol'))).status, 400, 'unknown model ids are refused')
+  } finally {
+    await h.close()
+  }
+})
+
+test('schema checks use own keys only: inherited names like constructor or toString cannot pass or satisfy required', async () => {
+  const h = await harness()
+  try {
+    const probe: ToolSpec[] = [{ name: 'probe', description: 'p', parameters: { type: 'object', properties: {}, required: ['toString'], additionalProperties: false } }]
+    const call = (input: unknown) => [{ type: 'tool-call', call: { id: 'c', name: 'probe', input } }, finish(1, 1)] as ModelEvent[]
+    h.seen.script = () => call({})
+    assert.equal((await events(await h.post(chat('p', { tools: probe }), h.token()))).at(-1)?.code, 'tool:schema')
+    h.seen.script = () => call({ constructor: 1 })
+    assert.equal((await events(await h.post(chat('p', { tools: probe }), h.token()))).at(-1)?.code, 'tool:schema')
+  } finally {
+    await h.close()
+  }
+})
+
+test('a secret inside tool-call input is blocked before the tool call is written', async () => {
+  const h = await harness()
+  try {
+    h.seen.script = () => [{ type: 'tool-call', call: { id: 'c', name: 'read_file', input: { path: 'FOUNDRY-KEY-VALUE-0123456789' } } }, finish(1, 1)]
+    const out = await events(await h.post(chat('read', { tools }), h.token()))
+    assert.equal(out.some((e) => e.type === 'tool-call'), false)
+    assert.equal(out.at(-1)?.code, 'secret:gateway-credential')
+  } finally {
+    await h.close()
+  }
+})
+
+test('parallel requests from one user are capped; the slot frees when a request ends', async () => {
+  const h = await harness()
+  try {
+    let open!: () => void
+    h.seen.gate = new Promise<void>((resolve) => { open = resolve })
+    const inFlight = [h.post(chat('1'), h.token()), h.post(chat('2'), h.token())]
+    for (let i = 0; i < 400 && h.seen.calls.length < 2; i++) await new Promise((r) => setTimeout(r, 5))
+    assert.equal(h.seen.calls.length, 2)
+
+    const third = await h.post(chat('3'), h.token())
+    assert.equal(third.status, 429)
+    assert.equal(third.headers.get('retry-after'), '1')
+
+    open()
+    const done = await Promise.all(inFlight)
+    for (const r of done) { assert.equal(r.status, 200); await r.text() }
+    h.seen.gate = null
+    assert.equal((await h.post(chat('after'), h.token())).status, 200)
   } finally {
     await h.close()
   }
