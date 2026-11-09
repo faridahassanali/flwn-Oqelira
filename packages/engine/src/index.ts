@@ -1,5 +1,7 @@
 export { createEngine, DEFAULT_SESSION } from './engine.js'
 export type { Engine, EngineOptions, RunIO } from './engine.js'
 export type { UsageLimits, UsageSnapshot, UsageWindow } from './usage.js'
+export { gitDiff, gitHistory, sessionFiles } from './git.js'
+export type { GitCommitDiff, GitCommitSummary } from './git.js'
 export { serve } from './serve.js'
 export type { ServeOptions } from './serve.js'

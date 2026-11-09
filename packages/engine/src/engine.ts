@@ -27,6 +27,8 @@ import type { SessionInfo, SessionStore, Snapshot } from './store.js'
 import { UsageTracker, usageLimitsFromEnv } from './usage.js'
 import type { UsageSnapshot } from './usage.js'
 import { hardDenyReason } from './classifier.js'
+import { gitDiff, gitHistory, sessionFiles } from './git.js'
+import type { GitCommitDiff, GitCommitSummary } from './git.js'
 
 export interface EngineOptions {
   cwd: string
@@ -65,6 +67,9 @@ export interface Engine {
   readonly memory: boolean
   readonly webSearch: boolean
   usage(): UsageSnapshot
+  gitHistory(limit?: number): Promise<GitCommitSummary[]>
+  gitDiff(commit: string): Promise<GitCommitDiff>
+  sessionFiles(sessionId?: string): Promise<string[]>
   setModel(id: string): ModelConfig
   /** Summary line the interfaces show for a tool call. */
   describe(name: string, input: unknown): string
@@ -186,6 +191,9 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
     memory: Boolean(memory),
     webSearch: tools.some((t) => t.spec.name === 'web_search'),
     usage: () => usage.snapshot(),
+    gitHistory: (limit) => gitHistory(cwd, limit),
+    gitDiff: (commit) => gitDiff(cwd, commit),
+    sessionFiles: async (id = DEFAULT_SESSION) => sessionFiles(stateOf(id).messages),
     setModel(id) {
       model = findModel(id, models)
       return model

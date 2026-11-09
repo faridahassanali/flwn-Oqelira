@@ -42,11 +42,17 @@ export type EngineRequest =
   | { type: 'end'; sessionId?: string }
   | { type: 'memory'; action: 'list' | 'forget' | 'approve'; id?: string }
   | { type: 'history'; sessionId?: string }
+  | { type: 'git-history'; limit?: number }
+  | { type: 'git-diff'; commit: string }
+  | { type: 'session-files'; sessionId?: string }
 export type EngineMessage =
   | { type: 'ready'; protocol: number; version: string; cwd: string; model: string; models: { id: string; deployment: string }[]; memory: boolean; webSearch: boolean }
   | { type: 'cleared' }
   | { type: 'sessions'; sessions: { id: string; title: string; model: string; createdAt: string; updatedAt: string; messages: number }[] }
   | { type: 'history'; sessionId: string; messages: unknown[] }
+  | { type: 'git-history'; commits: { hash: string; shortHash: string; author: string; date: string; subject: string }[] }
+  | { type: 'git-diff'; diff: { hash: string; patch: string; files: string[] } }
+  | { type: 'session-files'; sessionId: string; files: string[] }
   | { type: 'ended'; saved: number }
   | { type: 'memory'; entries: { id: string; text: string; kind: string; status: string; createdAt: string }[]; forgotten?: boolean; approved?: number }
   | HostEvent

@@ -32,11 +32,11 @@ Options:
 Subcommands:
   oqelira serve         headless engine for the web host and VS Code (JSON lines on stdin/stdout)
 
-In the session:  /model <id>   /resume [id]   /clear   /help   /exit      Ctrl+C interrupts a running task.
+In the session:  /model <id>   /resume [id]   /git [commit|files]   /clear   /help   /exit      Ctrl+C interrupts a running task.
 Project rules are read from OQELIRA.md (or AGENTS.md) in the project directory.
 `
 
-const SESSION_HELP = '/model <id>  switch model   /resume [id]  list or resume a session   /memory  list project memory   /steps  expand completed steps   /step <n>  expand one step   /clear  forget current session   /exit  quit   Ctrl+C  interrupt'
+const SESSION_HELP = '/model <id>  switch model   /resume [id]  list or resume a session   /git [commit|files]  inspect read-only Git history   /memory  list project memory   /steps  expand completed steps   /step <n>  expand one step   /clear  forget current session   /exit  quit   Ctrl+C  interrupt'
 
 function oneLine(text: string, max = 110): string {
   const first = text.split(/\r?\n/).find((l) => l.trim()) ?? ''
@@ -157,6 +157,7 @@ async function main(): Promise<number> {
   const commandMenu = () => [
     `${bold('/model <id>')}  switch model`,
     `${bold('/resume [id]')}  list or resume a saved session`,
+    `${bold('/git [commit|files]')}  inspect commits, a diff, or files touched in this session`,
     `${bold('/memory [approve|forget]')}  review project memory`,
     `${bold('/steps')} / ${bold('/step <n>')}  review completed tool steps`,
     `${bold('/clear')}  clear the current session`,
@@ -296,6 +297,24 @@ async function main(): Promise<number> {
         const found = sessions.find(one => one.id === requested || one.id.startsWith(requested))
         if (!found) out(`${dim('session not found. use /resume to list saved sessions')}\n`)
         else { sessionId = found.id; out(`${green('session:')} ${plainText(found.title)} ${dim(`(${found.id.slice(0, 8)})`)}\n`) }
+      }
+      continue
+    }
+    if (text === '/git' || text.startsWith('/git ')) {
+      const [, target] = text.split(/\s+/, 2)
+      try {
+        if (target === 'files') {
+          const files = await engine.sessionFiles(sessionId)
+          out(files.length ? `${files.map((file) => `  ${file}`).join('\n')}\n` : `${dim('no file activity recorded for this session')}\n`)
+        } else if (target) {
+          const diff = await engine.gitDiff(target)
+          out(`${bold(`${diff.hash} · ${diff.files.length} file${diff.files.length === 1 ? '' : 's'}`)}\n${plainText(diff.patch)}${diff.patch.endsWith('\n') ? '' : '\n'}`)
+        } else {
+          const commits = await engine.gitHistory(12)
+          out(commits.length ? `${commits.map((commit) => `${dim(commit.shortHash)} ${commit.subject} ${dim(`· ${commit.author} · ${commit.date}`)}`).join('\n')}\n${dim('use /git <commit> to inspect the read-only diff, or /git files for this session')}\n` : `${dim('no Git commits found')}\n`)
+        }
+      } catch (e) {
+        out(`${dim(`Git history unavailable: ${(e as Error).message}`)}\n`)
       }
       continue
     }

@@ -91,6 +91,15 @@ export async function serve(engine: Engine, { input = process.stdin, output = pr
       case 'history':
         send({ type: 'history', sessionId: req.sessionId ?? DEFAULT_SESSION, messages: await engine.history(req.sessionId) })
         return
+      case 'git-history':
+        send({ type: 'git-history', commits: await engine.gitHistory(req.limit) })
+        return
+      case 'git-diff':
+        send({ type: 'git-diff', diff: await engine.gitDiff(req.commit) })
+        return
+      case 'session-files':
+        send({ type: 'session-files', sessionId: req.sessionId ?? DEFAULT_SESSION, files: await engine.sessionFiles(req.sessionId) })
+        return
       case 'clear':
         if (run) { send({ type: 'error', message: 'Cannot clear while a run is active' }); return }
         await engine.clear(req.sessionId)
