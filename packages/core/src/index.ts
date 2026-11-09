@@ -1,7 +1,7 @@
 export * from './providers/types.js'
 export * from './providers/registry.js'
 export { createFoundry, createFoundryEmbedder, foundryConfigFromEnv } from './providers/foundry.js'
-export { createGatewayProvider } from './providers/gateway.js'
+export { createGatewayProvider, gatewayConfigFromEnv, GatewayError } from './providers/gateway.js'
 export type { GatewayOptions, GatewayWireEvent } from './providers/gateway.js'
 export { createDecisionClassifier, decisionConfigFromEnv } from './providers/decision.js'
 export type { DecisionConfig } from './providers/decision.js'

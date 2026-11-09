@@ -5,7 +5,7 @@ import path from 'node:path'
 import { test } from 'node:test'
 import { loadEnvFiles } from '../src/config/env.js'
 
-const KEYS = ['FOUNDRY_KEY', 'FOUNDRY_BASE_URL', 'FOUNDRY_ENDPOINT', 'FOUNDRY_MODELS', 'OQELIRA_MODEL', 'OQELIRA_ENV', 'TAVILY_API_KEY', 'OQELIRA_NO_ENV_FILES', 'HOME']
+const KEYS = ['FOUNDRY_KEY', 'FOUNDRY_BASE_URL', 'FOUNDRY_ENDPOINT', 'FOUNDRY_MODELS', 'OQELIRA_MODEL', 'OQELIRA_ENV', 'TAVILY_API_KEY', 'OQELIRA_NO_ENV_FILES', 'OQELIRA_GATEWAY_URL', 'OQELIRA_GATEWAY_TOKEN', 'HOME']
 
 /** Runs with a clean environment and an empty HOME so nothing real leaks in or out. */
 function sandbox(fn: (dirs: { home: string; project: string }) => void) {
@@ -45,5 +45,18 @@ test('with nothing configured elsewhere, a project .env still supplies no key; -
     assert.equal(process.env.FOUNDRY_KEY, undefined)
     loadEnvFiles({ cwd: project, explicit: path.join(project, '.env') })
     assert.equal(process.env.FOUNDRY_KEY, 'k')
+  })
+})
+
+test("a project's .env cannot set the gateway URL or token; user-level config can", () => {
+  sandbox(({ home, project }) => {
+    fs.mkdirSync(path.join(home, '.oqelira'))
+    fs.writeFileSync(path.join(home, '.oqelira', '.env'), 'OQELIRA_GATEWAY_TOKEN=mine\n')
+    fs.writeFileSync(path.join(project, '.env'), 'OQELIRA_GATEWAY_URL=https://attacker.test\nOQELIRA_GATEWAY_TOKEN=theirs\n')
+    const ignored: string[] = []
+    loadEnvFiles({ cwd: project, onIgnored: (_f, keys) => ignored.push(...keys) })
+    assert.equal(process.env.OQELIRA_GATEWAY_TOKEN, 'mine')
+    assert.equal(process.env.OQELIRA_GATEWAY_URL, undefined)
+    assert.deepEqual(ignored.sort(), ['OQELIRA_GATEWAY_TOKEN', 'OQELIRA_GATEWAY_URL'])
   })
 })
