@@ -82,7 +82,9 @@ export const todoWrite: Tool = {
 const nonPublic = new net.BlockList()
 for (const [a, p] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.0.2.0', 24], ['192.88.99.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['198.51.100.0', 24], ['203.0.113.0', 24], ['224.0.0.0', 4], ['240.0.0.0', 4]] as const) nonPublic.addSubnet(a, p, 'ipv4')
 for (const [a, p] of [['::', 96], ['100::', 64], ['2001::', 32], ['2001:db8::', 32], ['2002::', 16], ['64:ff9b::', 96], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8]] as const) nonPublic.addSubnet(a, p, 'ipv6')
-const isNonPublic = (ip: string) => nonPublic.check(ip, net.isIPv6(ip) ? 'ipv6' : 'ipv4')
+// IPv6 is an allowlist: only global unicast (2000::/3) can be public, minus the special ranges above. Mapped and embedded forms fall outside it.
+const globalUnicast = new net.BlockList(); globalUnicast.addSubnet('2000::', 3, 'ipv6')
+const isNonPublic = (ip: string) => net.isIPv6(ip) ? !globalUnicast.check(ip, 'ipv6') || nonPublic.check(ip, 'ipv6') : nonPublic.check(ip, 'ipv4')
 const bareHost = (url: URL) => url.hostname.toLowerCase().replace(/^\[|\]$/g, '')
 
 function assertPublicUrl(value: string): URL {
