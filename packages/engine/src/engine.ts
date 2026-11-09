@@ -25,6 +25,7 @@ import { openRules } from './rules.js'
 import { noStore, openSessionStore } from './store.js'
 import type { SessionInfo, SessionStore, Snapshot } from './store.js'
 import { UsageTracker, usageLimitsFromEnv } from './usage.js'
+import type { UsageSnapshot } from './usage.js'
 import { hardDenyReason } from './classifier.js'
 
 export interface EngineOptions {
@@ -63,6 +64,7 @@ export interface Engine {
   readonly model: ModelConfig
   readonly memory: boolean
   readonly webSearch: boolean
+  usage(): UsageSnapshot
   setModel(id: string): ModelConfig
   /** Summary line the interfaces show for a tool call. */
   describe(name: string, input: unknown): string
@@ -183,6 +185,7 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
     },
     memory: Boolean(memory),
     webSearch: tools.some((t) => t.spec.name === 'web_search'),
+    usage: () => usage.snapshot(),
     setModel(id) {
       model = findModel(id, models)
       return model

@@ -15,6 +15,17 @@ export interface UsageLimits {
   weekly?: number
 }
 
+export interface UsageWindow {
+  used: number
+  limit?: number
+  freesAt?: Date
+}
+
+export interface UsageSnapshot {
+  fiveHours: UsageWindow
+  weekly: UsageWindow
+}
+
 export class UsageLimitError extends Error {
   constructor(readonly window: '5-hour' | 'weekly', readonly freesAt: Date) {
     super(`${window} token limit reached. Usage becomes available again at ${freesAt.toLocaleString()}.`)
@@ -61,6 +72,19 @@ export class UsageTracker {
       if (usage.tokens >= Math.ceil(limit * 0.8) && usage.tokens < limit) notices.push(`${window.name} token usage is ${usage.tokens}/${limit} (${Math.floor((usage.tokens / limit) * 100)}%).`)
     }
     return notices
+  }
+
+  snapshot(): UsageSnapshot {
+    const now = this.now()
+    const read = (durationMs: number, limit?: number): UsageWindow => {
+      const usage = this.store.usageSince(new Date(now.getTime() - durationMs))
+      const freesAt = usage.oldestAt ? new Date(usage.oldestAt.getTime() + durationMs) : undefined
+      return { used: usage.tokens, ...(limit === undefined ? {} : { limit }), ...(freesAt ? { freesAt } : {}) }
+    }
+    return {
+      fiveHours: read(5 * 60 * 60 * 1000, this.limits.fiveHours),
+      weekly: read(7 * 24 * 60 * 60 * 1000, this.limits.weekly),
+    }
   }
 }
 

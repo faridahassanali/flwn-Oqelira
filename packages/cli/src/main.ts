@@ -1,8 +1,9 @@
 import { parseArgs } from 'node:util'
+import path from 'node:path'
 import { DEFAULT_MODELS, plainText } from '@oqelira/core'
 import type { Approver, Risk } from '@oqelira/core'
 import { renderApproval } from './approval.js'
-import { createEngine, serve } from '@oqelira/engine'
+import { createEngine, DEFAULT_SESSION, serve } from '@oqelira/engine'
 import type { Engine } from '@oqelira/engine'
 import { LineReader } from './lines.js'
 import { bold, collapsePreviousLine, cyan, dim, green, playStartup, red, terminalEnabled, yellow } from './ui.js'
@@ -31,15 +32,21 @@ Options:
 Subcommands:
   oqelira serve         headless engine for the web host and VS Code (JSON lines on stdin/stdout)
 
-In the session:  /model <id>   /clear   /help   /exit      Ctrl+C interrupts a running task.
+In the session:  /model <id>   /resume [id]   /clear   /help   /exit      Ctrl+C interrupts a running task.
 Project rules are read from OQELIRA.md (or AGENTS.md) in the project directory.
 `
 
-const SESSION_HELP = '/model <id>  switch model   /memory  list project memory (/memory approve <id|all>, /memory forget <id>)   /steps  expand completed steps   /step <n>  expand one step   /clear  forget saved conversation   /exit  quit   Ctrl+C  interrupt'
+const SESSION_HELP = '/model <id>  switch model   /resume [id]  list or resume a session   /memory  list project memory   /steps  expand completed steps   /step <n>  expand one step   /clear  forget current session   /exit  quit   Ctrl+C  interrupt'
 
 function oneLine(text: string, max = 110): string {
   const first = text.split(/\r?\n/).find((l) => l.trim()) ?? ''
   return first.length > max ? `${first.slice(0, max)}...` : first
+}
+
+function compactCount(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}m`
+  if (value >= 1_000) return `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1)}k`
+  return String(value)
 }
 
 async function main(): Promise<number> {
@@ -109,6 +116,7 @@ async function main(): Promise<number> {
     return 0
   }
   const { cwd } = engine
+  let sessionId = DEFAULT_SESSION
 
   const lines = new LineReader()
   const alwaysAllow = new Set<Risk>()
@@ -138,6 +146,24 @@ async function main(): Promise<number> {
     if (!atLineStart) out('\n')
   }
 
+  const usageLabel = (name: string, window: { used: number; limit?: number }) => `${name} ${window.limit === undefined ? 'off' : `${compactCount(window.used)}/${compactCount(window.limit)}`}`
+  const statusLine = async (): Promise<string> => {
+    const history = await engine.history(sessionId)
+    const raw = `${engine.model.id} | ${path.basename(cwd) || cwd} | session ${sessionId === DEFAULT_SESSION ? 'default' : sessionId.slice(0, 8)} | context ${compactCount(JSON.stringify(history).length)} chars | ${usageLabel('5h', engine.usage().fiveHours)} | ${usageLabel('week', engine.usage().weekly)}`
+    const width = process.stdout.columns ?? 120
+    const clipped = raw.length > Math.max(48, width - 2) ? `${raw.slice(0, Math.max(45, width - 5))}...` : raw
+    return `${dim('status ')}${bold(clipped)}`
+  }
+  const commandMenu = () => [
+    `${bold('/model <id>')}  switch model`,
+    `${bold('/resume [id]')}  list or resume a saved session`,
+    `${bold('/memory [approve|forget]')}  review project memory`,
+    `${bold('/steps')} / ${bold('/step <n>')}  review completed tool steps`,
+    `${bold('/clear')}  clear the current session`,
+    `${bold('/help')} / ${bold('/exit')}  show help or leave`,
+  ].join('\n')
+  const printStatus = async () => { ensureNewline(); out(`${await statusLine()}\n`) }
+
   let current: AbortController | null = null
   const steps = new StepLog()
   const rail = new StepRail()
@@ -160,6 +186,7 @@ async function main(): Promise<number> {
     }
     try {
       const result = await engine.run(prompt, {
+        sessionId,
         signal: current.signal,
         approve,
         onEvent: (e) => {
@@ -224,7 +251,7 @@ async function main(): Promise<number> {
     const abort = new AbortController()
     current = abort
     try {
-      await engine.endSession(undefined, { signal: abort.signal, approve, onEvent: (e) => { if (e.type === 'notice') out(`${dim(e.message)}\n`) } })
+      await engine.endSession(sessionId, { signal: abort.signal, approve, onEvent: (e) => { if (e.type === 'notice') out(`${dim(e.message)}\n`) } })
     } catch {
       /* interrupted: nothing is marked as saved, so the next session retries */
     } finally {
@@ -242,19 +269,34 @@ async function main(): Promise<number> {
 
   // ---- interactive session
   await playStartup()
-  out(`${bold('Oqelira')} ${dim(`by Flwn · model ${engine.model.id} (${engine.model.api}) | ${cwd}`)}\n${dim(SESSION_HELP)}\n`)
+  out(`${await statusLine()}\n${bold('Oqelira')} ${dim(`by Flwn · ${cwd}`)}\n${dim(SESSION_HELP)}\n`)
   const pending = engine.memory ? (await engine.memories(500)).filter((m) => m.status === 'pending').length : 0
   if (pending) out(`${yellow(`${pending} proposed ${pending === 1 ? 'memory awaits' : 'memories await'} your review:`)} ${dim('/memory, then /memory approve <id|all>')}\n`)
-  const restored = (await engine.history()).length
+  const restored = (await engine.history(sessionId)).length
   if (restored) out(`${dim(`restored ${restored} local history messages`)}\n`)
+  let firstPrompt = true
   for (;;) {
+    if (!firstPrompt) await printStatus()
+    firstPrompt = false
     const line = await lines.next(`${bold('> ')}`)
     if (line === null) break
     const text = line.trim()
     if (!text) continue
     if (text === '/exit' || text === '/quit') break
     if (text === '/help') {
-      out(`${dim(SESSION_HELP)}\n`)
+      out(`${commandMenu()}\n`)
+      continue
+    }
+    if (text === '/resume' || text.startsWith('/resume ')) {
+      const requested = text.split(/\s+/)[1]
+      const sessions = engine.sessions()
+      if (!requested) {
+        out(sessions.length ? sessions.slice(0, 12).map(one => `${dim(one.id === sessionId ? '*' : ' ')} ${one.id.slice(0, 8)}  ${plainText(one.title)}  ${one.messages} msgs`).join('\n') + '\n' : `${dim('no saved sessions yet')}\n`)
+      } else {
+        const found = sessions.find(one => one.id === requested || one.id.startsWith(requested))
+        if (!found) out(`${dim('session not found. use /resume to list saved sessions')}\n`)
+        else { sessionId = found.id; out(`${green('session:')} ${plainText(found.title)} ${dim(`(${found.id.slice(0, 8)})`)}\n`) }
+      }
       continue
     }
     if (text === '/steps') {
@@ -287,7 +329,7 @@ async function main(): Promise<number> {
     }
     if (text === '/clear') {
       await saveSessionMemory()
-      await engine.clear()
+      await engine.clear(sessionId)
       steps.clear()
       if (rail.active) out(`${dim(rail.end())}\n`)
       out(`${dim('conversation cleared')}\n`)

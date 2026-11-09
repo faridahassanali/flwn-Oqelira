@@ -35,3 +35,14 @@ test('usage limits come only from explicit positive configuration', () => {
   assert.deepEqual(usageLimitsFromEnv({ OQELIRA_USAGE_5H_TOKENS: '50', OQELIRA_USAGE_WEEKLY_TOKENS: '500' }), { fiveHours: 50, weekly: 500 })
   assert.throws(() => usageLimitsFromEnv({ OQELIRA_USAGE_5H_TOKENS: '0' }), /positive integer/)
 })
+
+test('usage snapshot reports rolling totals and configured capacity', () => {
+  const now = new Date('2026-11-09T12:00:00Z')
+  const store = new MemoryUsageStore()
+  store.recordUsage({ at: new Date('2026-11-09T11:00:00Z'), model: 'm', inputTokens: 30, outputTokens: 20 })
+  const tracker = new UsageTracker(store, { fiveHours: 100, weekly: 500 }, () => now)
+  assert.deepEqual(tracker.snapshot(), {
+    fiveHours: { used: 50, limit: 100, freesAt: new Date('2026-11-09T16:00:00Z') },
+    weekly: { used: 50, limit: 500, freesAt: new Date('2026-11-16T11:00:00Z') },
+  })
+})
