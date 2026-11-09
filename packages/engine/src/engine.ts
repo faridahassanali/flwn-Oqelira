@@ -5,6 +5,8 @@ import {
   builtinTools,
   createFoundry,
   createFoundryEmbedder,
+  createDecisionClassifier,
+  decisionConfigFromEnv,
   findModel,
   foundryConfigFromEnv,
   loadEnvFiles,
@@ -23,7 +25,7 @@ import { openRules } from './rules.js'
 import { noStore, openSessionStore } from './store.js'
 import type { SessionInfo, SessionStore, Snapshot } from './store.js'
 import { UsageTracker, usageLimitsFromEnv } from './usage.js'
-import { classifyCommand, hardDenyReason } from './classifier.js'
+import { hardDenyReason } from './classifier.js'
 
 export interface EngineOptions {
   cwd: string
@@ -110,8 +112,8 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
   const models = modelsFromEnv()
   let model = findModel(opts.model ?? process.env.OQELIRA_MODEL ?? 'gpt-6-sol', models)
   const makeProvider = createFoundry(config)
-  const decisionModelId = process.env.OQELIRA_DECISION_MODEL?.trim()
-  const decisionProvider = opts.auto && decisionModelId ? makeProvider(findModel(decisionModelId, models)) : undefined
+  const decisionClassifier = opts.auto ? decisionConfigFromEnv() : undefined
+  const decideCommand = decisionClassifier ? createDecisionClassifier(decisionClassifier) : undefined
 
   // Project memory is on only when an embedding deployment is configured (never hardcoded).
   let memory: ContextGateway | undefined
@@ -130,7 +132,11 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
     if (rules.allows(req)) return 'allow'
     const custom = await opts.decide?.(req)
     if (custom) return custom
-    return decisionProvider ? classifyCommand(decisionProvider, req) : undefined
+    if (!decideCommand) return undefined
+    try {
+      const result = await decideCommand(typeof (req.input as { command?: unknown })?.command === 'string' ? (req.input as { command: string }).command : '')
+      return result?.allow ? 'allow' : result?.reason ? { decision: undefined, reason: `classifier: ${result.reason}` } : undefined
+    } catch { return undefined }
   }
   const system = DEFAULT_SYSTEM + readProjectRules(cwd)
   const usageLimits = usageLimitsFromEnv()

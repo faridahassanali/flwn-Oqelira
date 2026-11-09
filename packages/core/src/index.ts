@@ -1,6 +1,8 @@
 export * from './providers/types.js'
 export * from './providers/registry.js'
 export { createFoundry, createFoundryEmbedder, foundryConfigFromEnv } from './providers/foundry.js'
+export { createDecisionClassifier, decisionConfigFromEnv } from './providers/decision.js'
+export type { DecisionConfig } from './providers/decision.js'
 export * from './permissions.js'
 export * from './tools/index.js'
 export { runAgent } from './agent/loop.js'
