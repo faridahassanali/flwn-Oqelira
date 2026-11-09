@@ -25,12 +25,13 @@ const sandbox = runnerURL ? new RemoteSandbox(runnerURL, process.env.OQELIRA_RUN
 const socialProviders:('google'|'github')[]=[]
 if(config.google)socialProviders.push('google')
 if(config.github)socialProviders.push('github')
+const gatewayPool=config.gateway?new Pool({connectionString:config.gateway.databaseURL,max:2,connectionTimeoutMillis:5000,idleTimeoutMillis:30000}):undefined
 await pool.query('SELECT 1')
 // Each replica LISTENs on its own connection so any replica can wake a run owned by another.
 const channel = await PostgresRunChannel.open(pool, pgListen(config.databaseURL))
-const server = createCloudServer({ auth: createAuth(pool, config,mailPool?email=>enqueueAccountMail(mailPool,email):undefined), store: new Store(pool), channel, sandbox, origin: config.baseURL, dist: path.join(root, 'packages/web/dist'), models: modelsFromEnv(), provider: foundry,authCapabilities:{signup:config.signup,emailRecovery:!!mailSender,verification:config.requireEmailVerification,socialProviders} })
+const server = createCloudServer({ auth: createAuth(pool, config,mailPool?email=>enqueueAccountMail(mailPool,email):undefined), store: new Store(pool), channel, sandbox, origin: config.baseURL, dist: path.join(root, 'packages/web/dist'), models: modelsFromEnv(), provider: foundry,gateway:config.gateway&&{tokenKey:config.gateway.tokenKey,db:gatewayPool!},authCapabilities:{signup:config.signup,emailRecovery:!!mailSender,verification:config.requireEmailVerification,socialProviders} })
 const stopMail=startAccountMail(mailPool??pool,mailSender)
 await server.listen(config.port, process.env.OQELIRA_LISTEN_HOST ?? '127.0.0.1')
 process.stdout.write('Oqelira multi-user server ready\n')
-const shutdown = () => { stopMail();void server.close().then(() => Promise.all([pool.end(),mailPool?.end()])).finally(() => process.exit()) }
+const shutdown = () => { stopMail();void server.close().then(() => Promise.all([pool.end(),mailPool?.end(),gatewayPool?.end()])).finally(() => process.exit()) }
 process.on('SIGINT', shutdown); process.on('SIGTERM', shutdown)
