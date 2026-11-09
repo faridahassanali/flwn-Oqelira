@@ -139,9 +139,12 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
     if (rules.allows(req)) return 'allow'
     const custom = await opts.decide?.(req)
     if (custom) return custom
-    if (!decideCommand) return undefined
+    // The classifier only judges shell commands. Any other tool, or an empty command, falls through to the normal prompt.
+    if (!decideCommand || req.risk !== 'exec' || req.tool !== 'run_command') return undefined
+    const command = (req.input as { command?: unknown } | null)?.command
+    if (typeof command !== 'string' || !command.trim()) return undefined
     try {
-      const result = await decideCommand(typeof (req.input as { command?: unknown })?.command === 'string' ? (req.input as { command: string }).command : '')
+      const result = await decideCommand(command)
       return result?.allow ? 'allow' : result?.reason ? { decision: undefined, reason: `classifier: ${result.reason}` } : undefined
     } catch { return undefined }
   }

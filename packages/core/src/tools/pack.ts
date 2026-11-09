@@ -74,9 +74,16 @@ export const todoWrite: Tool = {
   async run(input, ctx) { const list = (input as any)?.tasks; if (!Array.isArray(list) || list.length > 50) throw new Error('tasks must be an array of at most 50 items'); if (list.some((task) => !task || typeof task.id !== 'string' || typeof task.text !== 'string' || !['pending', 'in_progress', 'done'].includes(task.status))) throw new Error('each task needs id, text and status'); tasks.set(ctx.cwd, list); return JSON.stringify({ tasks: list }) },
 }
 
+/** Loopback, unspecified, private, shared, link-local and unique-local ranges. IPv4-mapped IPv6 matches the IPv4 rules. */
+const nonPublic = new net.BlockList()
+for (const [a, p] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.168.0.0', 16], ['198.18.0.0', 15]] as const) nonPublic.addSubnet(a, p, 'ipv4')
+for (const [a, p] of [['::', 128], ['::1', 128], ['fc00::', 7], ['fe80::', 10]] as const) nonPublic.addSubnet(a, p, 'ipv6')
+const isNonPublic = (ip: string) => nonPublic.check(ip, net.isIPv6(ip) ? 'ipv6' : 'ipv4')
+const bareHost = (url: URL) => url.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+
 function assertPublicUrl(value: string): URL {
   const url = new URL(value); if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Only http(s) URLs are allowed')
-  const host = url.hostname.toLowerCase(); if (host === 'localhost' || host.endsWith('.localhost') || host === 'metadata.google.internal' || net.isIP(host) && (host === '127.0.0.1' || host === '::1' || host.startsWith('10.') || host.startsWith('192.168.') || host.startsWith('169.254.'))) throw new Error('Private and local addresses are not allowed')
+  const host = bareHost(url); if (host === 'localhost' || host.endsWith('.localhost') || host === 'metadata.google.internal' || net.isIP(host) && isNonPublic(host)) throw new Error('Private and local addresses are not allowed')
   return url
 }
 
@@ -86,7 +93,9 @@ export const webFetch: Tool = {
   async run(input, ctx) {
     let url = assertPublicUrl(str(input, 'url')); const max = Math.min(100_000, Math.max(1_000, Number((input as any)?.max_chars ?? 30_000)))
     for (let redirects = 0; redirects <= 3; redirects++) {
-      const address = await dns.lookup(url.hostname).catch(() => undefined); if (address && net.isIP(address.address) && (address.address === '127.0.0.1' || address.address === '::1' || address.address.startsWith('10.') || address.address.startsWith('192.168.') || address.address.startsWith('169.254.'))) throw new Error('Private and local addresses are not allowed')
+      // Every resolved address must be public, and a failed lookup is a refusal. ponytail: fetch resolves again, so DNS rebinding between check and connect is not closed; pin the IP through an undici dispatcher if this tool is ever exposed to untrusted callers.
+      const addresses = await dns.lookup(bareHost(url), { all: true }).catch(() => [])
+      if (!addresses.length || addresses.some((a) => isNonPublic(a.address))) throw new Error('Private and local addresses are not allowed')
       const response = await fetch(url, { redirect: 'manual', signal: AbortSignal.any([...(ctx.signal ? [ctx.signal] : []), AbortSignal.timeout(20_000)]) })
       if ([301, 302, 303, 307, 308].includes(response.status)) { const location = response.headers.get('location'); if (!location) throw new Error('Redirect has no location'); url = assertPublicUrl(new URL(location, url).toString()); continue }
       if (!response.ok) throw new Error(`web_fetch failed (HTTP ${response.status})`)

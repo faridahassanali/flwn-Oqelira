@@ -28,3 +28,9 @@ test('web_fetch rejects local addresses before making a request', async () => {
   await assert.rejects(webFetch.run({ url: 'http://127.0.0.1:1/' }, { cwd: '.' }), /Private and local/)
   await assert.rejects(webFetch.run({ url: 'file:///etc/passwd' }, { cwd: '.' }), /Only http/)
 })
+
+test('web_fetch rejects every private range, IPv6 literals and IPv4-mapped forms', async () => {
+  for (const host of ['172.16.0.1', '172.31.255.255', '0.0.0.0', '100.64.0.1', '[::1]', '[::]', '[fe80::1]', '[fd00::1]', '[::ffff:127.0.0.1]', '[::ffff:10.0.0.1]', '2130706433', 'localhost.']) {
+    await assert.rejects(webFetch.run({ url: `http://${host}:1/` }, { cwd: '.' }), /Private and local/, host)
+  }
+})
