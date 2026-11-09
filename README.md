@@ -68,7 +68,7 @@ remain deferred; future Flwn integrations must use one gateway.
     packages/protocol/         shared browser-safe transport contracts
     packages/extension/        VS Code commands, native diff review and SecretStorage
 
-## Quick start (Node >= 20.6)
+## Quick start (Node >= 22.12)
 
     npm install            # at the repo root (npm workspaces)
     npm test               # core, CLI and host tests; local mock servers only
@@ -76,11 +76,10 @@ remain deferred; future Flwn integrations must use one gateway.
     # for the CLI/engine, put the same settings in ~/.oqelira/.env; a project's own .env cannot set keys
     npm run live           # real Foundry: streaming + tools, permissions, edit + run
 
-Node 20.6 is the supported minimum. On a runtime without `node:sqlite` (available
-in newer Node releases), Oqelira still runs but starts without durable local session
-history or project memory and prints a notice. Use Node 22.5+ when those local
-persistence features are required; the Electron desktop app and VS Code already
-provide a compatible runtime.
+Node 22.12 is the supported minimum. It matches the model SDK and Electron tooling,
+and includes `node:sqlite`, which Oqelira uses for durable local session history and
+project memory. The Electron desktop app and VS Code already provide a compatible
+runtime.
 
 ## Use the CLI
 
