@@ -14,8 +14,11 @@ import type { Sandbox } from './sandbox.js'
 import { RunJournal, tailRun } from './journal.js'
 import type { RunChannel } from './channel.js'
 import {mayWrite,mayAdmin} from './access.js'
+import { issueToken } from '@oqelira/gateway/tokens'
+import { isRevoked, revokeUser } from '@oqelira/gateway/store'
+import type { Db } from '@oqelira/gateway/store'
 
-interface Options { auth: Auth; store: Store; channel: RunChannel; sandbox: Sandbox; origin: string; dist: string; models: readonly ModelConfig[]; provider: (model: ModelConfig) => ModelProvider; authCapabilities?:HostConfig['auth'] }
+interface Options { auth: Auth; store: Store; channel: RunChannel; sandbox: Sandbox; origin: string; dist: string; models: readonly ModelConfig[]; provider: (model: ModelConfig) => ModelProvider; authCapabilities?:HostConfig['auth']; gateway?: { tokenKey: Buffer; db: Db; ttlSeconds?: number } }
 class HttpError extends Error { constructor(readonly status: number, message: string) { super(message) } }
 const requireId = (value: unknown): string => { if (typeof value !== 'string' || !UUID.test(value)) throw new HttpError(400, 'Invalid resource ID'); return value }
 const text = (value: unknown, max: number): string => { if (typeof value !== 'string' || !value.trim() || value.length > max) throw new HttpError(400, 'Invalid text'); return value.trim() }
@@ -67,6 +70,21 @@ export function createCloudServer(opts: Options) {
     const user = session.user.id
     const accessProject=async(id:string,write=false)=>{const access=await opts.store.project(user,id);if(!access)throw new HttpError(404,'Project not found');if(write&&!mayWrite(access.role))throw new HttpError(403,'Your team role cannot change this project');return access}
     if (!await opts.store.takeQuota(user, 'api', 120, 60)) throw new HttpError(429, 'Request limit reached; wait before retrying')
+    if (url.pathname.startsWith('/api/gateway/')) {
+      const gw = opts.gateway
+      if (!gw) throw new HttpError(404, 'Gateway is not configured')
+      if (req.method === 'POST' && url.pathname === '/api/gateway/token') {
+        const data = await body(req), org = text(data.organizationId, 128), device = text(data.deviceId, 128)
+        // Only the caller's own identity, and only organizations they belong to.
+        if (!(await opts.store.organizations(user)).some(team => team.id === org)) throw new HttpError(403, 'Not a member of this organization')
+        if (await isRevoked(gw.db, user)) throw new HttpError(403, 'Gateway access revoked')
+        const ttl = gw.ttlSeconds ?? 900
+        reply(res, 200, { token: issueToken({ sub: user, org, dev: device }, gw.tokenKey, ttl), expiresIn: ttl }); return
+      }
+      // User-level and permanent, as the gateway implements it: every token for this user dies on its next request.
+      if (req.method === 'POST' && url.pathname === '/api/gateway/revoke') { await revokeUser(gw.db, user); reply(res, 200, { ok: true }); return }
+      throw new HttpError(404, 'Not found')
+    }
     if (req.method === 'GET' && url.pathname === '/api/projects') { reply(res, 200, await opts.store.projects(user)); return }
     if(req.method==='GET'&&url.pathname==='/api/teams'){reply(res,200,await opts.store.organizations(user));return}
     if (req.method === 'POST' && url.pathname === '/api/projects') { const data = await body(req); if ((await opts.store.projects(user)).length >= 20) throw new HttpError(429, 'Project limit reached');const organization=data.organizationId===undefined||data.organizationId===''?null:text(data.organizationId,128);if(organization&&!mayAdmin((await opts.store.organizations(user)).find(team=>team.id===organization)?.role))throw new HttpError(403,'A team administrator must create shared projects');reply(res, 201, await opts.store.createProject(user, text(data.name, 120),organization)); return }
