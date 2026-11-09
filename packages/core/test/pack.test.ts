@@ -30,7 +30,7 @@ test('web_fetch rejects local addresses before making a request', async () => {
 })
 
 test('web_fetch rejects every private range, IPv6 literals and IPv4-mapped forms', async () => {
-  for (const host of ['172.16.0.1', '172.31.255.255', '0.0.0.0', '100.64.0.1', '[::1]', '[::]', '[fe80::1]', '[fd00::1]', '[::ffff:127.0.0.1]', '[::ffff:10.0.0.1]', '[64:ff9b::7f00:1]', '[2002:7f00:1::]', '[ff02::1]', '[::127.0.0.1]', '224.0.0.1', '240.0.0.1', '2130706433', 'localhost.']) {
+  for (const host of ['172.16.0.1', '172.31.255.255', '0.0.0.0', '100.64.0.1', '[::1]', '[::]', '[fe80::1]', '[fd00::1]', '[::ffff:127.0.0.1]', '[::ffff:10.0.0.1]', '[64:ff9b::7f00:1]', '[64:ff9b:1::1]', '[2002:7f00:1::]', '[ff02::1]', '[::127.0.0.1]', '224.0.0.1', '240.0.0.1', '2130706433', 'localhost.']) {
     await assert.rejects(webFetch.run({ url: `http://${host}:1/` }, { cwd: '.' }), /Private and local/, host)
   }
 })
