@@ -7,6 +7,7 @@ import {serverConfig} from '../src/config.js'
 import {migrate} from '../src/migrate.js'
 import {createAuth} from '../src/auth.js'
 import {Store} from '../src/store.js'
+import {PostgresRunChannel} from '../src/channel.js'
 import {createCloudServer} from '../src/server.js'
 import type {HostEvent} from '@oqelira/protocol'
 
@@ -16,7 +17,7 @@ test('team roles protect shared projects, invitations, runs and approvals; remov
  const config=serverConfig({OQELIRA_SERVER_URL:`http://127.0.0.1:${port}`,OQELIRA_AUTH_SECRET:'ac0996b4c14adc375ed98a7b254e87afc8991babd58f038d9',OQELIRA_DATABASE_URL:'postgres://fixture',OQELIRA_ALLOW_SIGNUP:'true'})
  await migrate(pool,config)
  let modelCalls=0
- const server=createCloudServer({auth:createAuth(pool,config,async()=>{}),store,sandbox:{tools:()=>[]},origin:config.baseURL,dist:'.',models:[{id:'fixture',deployment:'fixture',api:'chat',speed:'fast'}],provider:()=>({id:'fixture',async *stream(){modelCalls++;yield{type:'tool-call',call:{id:'save',name:'remember_project',input:{content:'not approved'}}};yield{type:'finish',reason:'tool-calls'}}})})
+ const server=createCloudServer({auth:createAuth(pool,config,async()=>{}),store,channel:await PostgresRunChannel.open(pool,(c,cb)=>db.listen(c,cb)),sandbox:{tools:()=>[]},origin:config.baseURL,dist:'.',models:[{id:'fixture',deployment:'fixture',api:'chat',speed:'fast'}],provider:()=>({id:'fixture',async *stream(){modelCalls++;yield{type:'tool-call',call:{id:'save',name:'remember_project',input:{content:'not approved'}}};yield{type:'finish',reason:'tool-calls'}}})})
  await server.listen(port)
  const request=(route:string,cookie:string,data?:unknown)=>fetch(config.baseURL+route,{headers:{Origin:config.baseURL,Cookie:cookie,...(data===undefined?{}:{'Content-Type':'application/json'})},...(data===undefined?{}:{method:'POST',body:JSON.stringify(data)})})
  const signup=async(email:string)=>{const response=await request('/api/auth/sign-up/email','',{name:'Team fixture',email,password:'Controlled test password 2026!'});assert.equal(response.status,200);const user=(await response.json() as {user:{id:string}}).user;await pool.query('UPDATE "user" SET "emailVerified"=true WHERE id=$1',[user.id]);return{id:user.id,email,cookie:response.headers.getSetCookie().map(value=>value.split(';')[0]).join('; ')}}

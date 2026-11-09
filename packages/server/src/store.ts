@@ -20,11 +20,15 @@ export class Store {
     await this.pool.query("INSERT INTO oq_run_approvals(id,user_id,session_id,conversation_id,run_id,tool,expires_at) VALUES($1,$2,$3,$4,$5,$6,now()+interval '2 minutes')",[id,user,session,conversation,run,tool])
   }
   async pendingApproval(user:string,session:string,run:string,id:string) {
-    return (await this.pool.query("SELECT c.project_id FROM oq_run_approvals a JOIN oq_conversations c ON c.id=a.conversation_id WHERE a.id=$4 AND a.user_id=$1 AND a.session_id=$2 AND a.run_id=$3 AND a.allowed IS NULL AND a.expires_at>now()",[user,session,run,id])).rows[0] as {project_id:string}|undefined
+    return (await this.pool.query("SELECT c.project_id FROM oq_run_approvals a JOIN oq_conversations c ON c.id=a.conversation_id WHERE a.id=$4 AND a.user_id=$1 AND a.session_id=$2 AND a.run_id=$3 AND c.active_run=a.run_id AND c.lease_until>now() AND a.allowed IS NULL AND a.expires_at>now()",[user,session,run,id])).rows[0] as {project_id:string}|undefined
   }
   async decideApproval(user:string,session:string,run:string,id:string,actor:string,allowed:boolean) {
     return (await this.pool.query("UPDATE oq_run_approvals SET allowed=$6,decided_by=$5,decided_at=now() WHERE id=$4 AND user_id=$1 AND session_id=$2 AND run_id=$3 AND allowed IS NULL AND expires_at>now() RETURNING conversation_id,tool",[user,session,run,id,actor,allowed])).rows[0] as {conversation_id:string;tool:string}|undefined
   }
+  /** Owner of a run that is live now, on any replica. Lets a replica without the stream accept its approval. */
+  async activeRunOwner(user:string,run:string){return(await this.pool.query('SELECT c.user_id FROM oq_conversations c JOIN oq_projects p ON p.id=c.project_id LEFT JOIN member m ON m."organizationId"=p.organization_id AND m."userId"=$1 WHERE c.active_run=$2 AND c.lease_until>now() AND ((p.organization_id IS NULL AND p.user_id=$1) OR m.id IS NOT NULL) LIMIT 1',[user,run])).rows[0]?.user_id as string|undefined}
+  /** Whether a run still holds its conversation lease; a stream waits on this for runs owned elsewhere. */
+  async runActive(user:string,run:string){return(await this.pool.query('SELECT 1 FROM oq_conversations WHERE user_id=$1 AND active_run=$2 AND lease_until>now()',[user,run])).rows.length>0}
   async approvalDecision(user:string,run:string,id:string) {
     return (await this.pool.query('SELECT allowed FROM oq_run_approvals WHERE id=$3 AND user_id=$1 AND run_id=$2',[user,run,id])).rows[0]?.allowed as boolean|undefined
   }
