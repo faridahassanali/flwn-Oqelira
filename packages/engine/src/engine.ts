@@ -5,10 +5,12 @@ import {
   builtinTools,
   createFoundry,
   createFoundryEmbedder,
+  createGatewayProvider,
   createDecisionClassifier,
   decisionConfigFromEnv,
   findModel,
   foundryConfigFromEnv,
+  gatewayConfigFromEnv,
   loadEnvFiles,
   memoryTools,
   modelsFromEnv,
@@ -117,24 +119,41 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
   loadEnvFiles({ explicit: opts.envFile, cwd, onIgnored: (_file, keys) => skipped.push(...keys) })
   if (skipped.length) startupNotices.push(`Ignored ${skipped.join(', ')} in the project's .env: a project cannot set connection settings or keys. Put them in ~/.oqelira/.env, the environment, or pass --env-file.`)
 
-  let config
+  // Gateway mode (a gateway URL and token are set) never reads FOUNDRY_*: the gateway pins endpoint and deployments.
+  // Direct Foundry mode is the default when no gateway is configured.
+  let gateway
   try {
-    config = foundryConfigFromEnv()
+    gateway = gatewayConfigFromEnv()
   } catch (e) {
     throw new Error(`${(e as Error).message}\nSet them in the environment or in ~/.oqelira/.env, or pass --env-file.${skipped.length ? ` (Ignored in the project's .env, which cannot set them: ${skipped.join(', ')}.)` : ''}`)
   }
+  let config: ReturnType<typeof foundryConfigFromEnv> | undefined
+  if (!gateway) {
+    try {
+      config = foundryConfigFromEnv()
+    } catch (e) {
+      throw new Error(`${(e as Error).message}\nSet them in the environment or in ~/.oqelira/.env, or pass --env-file.${skipped.length ? ` (Ignored in the project's .env, which cannot set them: ${skipped.join(', ')}.)` : ''}`)
+    }
+  }
   const models = modelsFromEnv()
   let model = findModel(opts.model ?? process.env.OQELIRA_MODEL ?? 'gpt-6-sol', models)
-  const makeProvider = createFoundry(config)
-  const decisionClassifier = opts.auto ? decisionConfigFromEnv() : undefined
+  let notifyRun: (message: string) => void = () => {}
+  let lastWarning = ''
+  const makeProvider = gateway
+    ? createGatewayProvider({ ...gateway, onWarning: (w) => { if (w !== lastWarning) { lastWarning = w; notifyRun(`Usage warning from the gateway: ${w}`) } } })
+    : createFoundry(config!)
+  if (gateway && opts.auto) startupNotices.push('Auto mode classifier is unavailable through the gateway; commands will be asked as usual.')
+  const decisionClassifier = opts.auto && !gateway ? decisionConfigFromEnv() : undefined
   const decideCommand = decisionClassifier ? createDecisionClassifier(decisionClassifier) : undefined
 
   // Project memory is on only when an embedding deployment is configured (never hardcoded).
   let memory: ContextGateway | undefined
   const embeddingDeployment = process.env.OQELIRA_EMBEDDING_DEPLOYMENT?.trim()
-  if (embeddingDeployment) {
+  if (embeddingDeployment && gateway) {
+    startupNotices.push('Project memory is unavailable through the gateway (no embeddings route yet).')
+  } else if (embeddingDeployment) {
     try {
-      memory = await openLocalMemory(cwd, createFoundryEmbedder(config)(embeddingDeployment), stateRoot)
+      memory = await openLocalMemory(cwd, createFoundryEmbedder(config!)(embeddingDeployment), stateRoot)
     } catch (e) {
       startupNotices.push(`Project memory disabled: ${(e as Error).message}`)
     }
@@ -289,6 +308,7 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
           io.onEvent({ type: 'notice', message: `Memory recall skipped: ${(e as Error).message}` })
         }
       }
+      notifyRun = (message) => io.onEvent({ type: 'notice', message })
       const provider = makeProvider(model)
       const toolHooks = customizations.hasToolHooks()
       const compact = createCompactor({

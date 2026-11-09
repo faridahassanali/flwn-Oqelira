@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { createGatewayProvider } from '../src/providers/gateway.js'
+import { GatewayError, createGatewayProvider, gatewayConfigFromEnv } from '../src/providers/gateway.js'
 import type { ModelConfig } from '../src/providers/registry.js'
 import type { ModelEvent } from '../src/providers/types.js'
 
@@ -60,7 +60,7 @@ test('a refusal from the gateway is an error, with its reason and no partial ans
   const gw = await fakeGateway(() => ({ status: 422, lines: [JSON.stringify({ error: 'Blocked by gateway', reasons: ['injection:override-previous'] })] }))
   try {
     const provider = createGatewayProvider({ baseURL: gw.baseURL, token: 't' })(model)
-    await assert.rejects(collect(provider.stream(req)), /Gateway refused the request \(422\): Blocked by gateway/)
+    await assert.rejects(collect(provider.stream(req)), /Blocked by the gateway: injection:override-previous/)
   } finally {
     await gw.close()
   }
@@ -76,4 +76,30 @@ test('an error event mid-stream ends the answer with an error; a stream without 
     await blocked.close()
     await cut.close()
   }
+})
+
+test('gatewayConfigFromEnv: unset means direct mode, half-set is an error, URL must be https (or loopback)', () => {
+  assert.equal(gatewayConfigFromEnv({}), undefined)
+  assert.deepEqual(gatewayConfigFromEnv({ OQELIRA_GATEWAY_URL: 'https://gw.example.com/', OQELIRA_GATEWAY_TOKEN: 't' }), { baseURL: 'https://gw.example.com', token: 't' })
+  assert.ok(gatewayConfigFromEnv({ OQELIRA_GATEWAY_URL: 'http://localhost:8080', OQELIRA_GATEWAY_TOKEN: 't' }))
+  assert.throws(() => gatewayConfigFromEnv({ OQELIRA_GATEWAY_URL: 'https://gw.example.com' }), /both be set/)
+  assert.throws(() => gatewayConfigFromEnv({ OQELIRA_GATEWAY_TOKEN: 't' }), /both be set/)
+  assert.throws(() => gatewayConfigFromEnv({ OQELIRA_GATEWAY_URL: 'http://gw.example.com', OQELIRA_GATEWAY_TOKEN: 't' }), /https/)
+})
+
+test('gateway refusals map to user-facing messages; quota warning header is surfaced', async () => {
+  const cases: [number, object, RegExp][] = [
+    [401, { error: 'Token revoked' }, /Sign in again/],
+    [429, { error: 'Usage limit reached', reasons: ['5h tokens'], retryAt: '2030-01-01T05:00:00.000Z' }, /Usage limit reached \(5h tokens\)\. It frees up at .*2030/],
+    [429, { error: 'Too many concurrent requests' }, /\(429\): Too many concurrent/],
+    [422, { error: 'Blocked by gateway', reasons: ['injection:override'] }, /Blocked by the gateway: injection:override/],
+  ]
+  for (const [status, body, re] of cases) {
+    const provider = createGatewayProvider({ baseURL: 'http://x', token: 't', fetch: async () => new Response(JSON.stringify(body), { status }) })(model)
+    await assert.rejects(async () => { for await (const _ of provider.stream({ system: '', messages: [] })) void _ }, (e: unknown) => e instanceof GatewayError && e.status === status && re.test(e.message))
+  }
+  const warnings: string[] = []
+  const ok = createGatewayProvider({ baseURL: 'http://x', token: 't', onWarning: (w) => warnings.push(w), fetch: async () => new Response('{"type":"finish","reason":"stop"}\n', { status: 200, headers: { 'X-Oqelira-Quota-Warning': '5h:80%' } }) })(model)
+  for await (const _ of ok.stream({ system: '', messages: [] })) void _
+  assert.deepEqual(warnings, ['5h:80%'])
 })

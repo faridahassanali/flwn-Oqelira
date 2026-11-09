@@ -55,6 +55,8 @@ export function loadEnvFiles(opts: { explicit?: string; cwd: string; onIgnored?:
     for (const [k, v] of Object.entries(parseEnv(text))) {
       if (!ALLOWED.test(k)) continue
       if (projectFile && !PROJECT_ALLOWED.test(k)) { ignored.push(k); continue }
+      if (!ALLOWED.test(k)) continue
+      if (projectFile && !PROJECT_ALLOWED.test(k)) { ignored.push(k); continue }
       if (process.env[k] === undefined) process.env[k] = v
     }
     if (ignored.length) opts.onIgnored?.(file, ignored) // names only, never values
