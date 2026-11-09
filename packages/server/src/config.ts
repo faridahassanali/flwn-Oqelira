@@ -20,5 +20,10 @@ export function serverConfig(env: NodeJS.ProcessEnv = process.env) {
     if(!!clientId!==!!clientSecret)throw new Error(`Configure both OQELIRA_${name}_CLIENT_ID and OQELIRA_${name}_CLIENT_SECRET`)
     return clientId&&clientSecret?{clientId,clientSecret}:undefined
   }
-  return { baseURL: baseURL.origin, secret, databaseURL, port, production, signup: env.OQELIRA_ALLOW_SIGNUP === 'true', requireEmailVerification:production||env.OQELIRA_REQUIRE_VERIFIED_EMAIL==='true', smtpURL:env.OQELIRA_SMTP_URL?.trim(),smtpFrom:env.OQELIRA_SMTP_FROM?.trim(),google:provider('GOOGLE'),github:provider('GITHUB') }
+  // Optional gateway token issuer. The key is shared with the gateway; the database is the gateway's (revocations).
+  const gwKey = env.OQELIRA_GATEWAY_TOKEN_KEY?.trim(), gwDb = env.OQELIRA_GATEWAY_DATABASE_URL?.trim()
+  if (!!gwKey !== !!gwDb) throw new Error('Configure both OQELIRA_GATEWAY_TOKEN_KEY and OQELIRA_GATEWAY_DATABASE_URL')
+  if (gwKey && Buffer.byteLength(gwKey) < 32) throw new Error('OQELIRA_GATEWAY_TOKEN_KEY must be at least 32 bytes')
+  const gateway = gwKey && gwDb ? { tokenKey: Buffer.from(gwKey), databaseURL: gwDb } : undefined
+  return { gateway, baseURL: baseURL.origin, secret, databaseURL, port, production, signup: env.OQELIRA_ALLOW_SIGNUP === 'true', requireEmailVerification:production||env.OQELIRA_REQUIRE_VERIFIED_EMAIL==='true', smtpURL:env.OQELIRA_SMTP_URL?.trim(),smtpFrom:env.OQELIRA_SMTP_FROM?.trim(),google:provider('GOOGLE'),github:provider('GITHUB') }
 }
