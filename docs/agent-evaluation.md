@@ -34,3 +34,20 @@ The deterministic core checks passed: TypeScript validation plus the prompt/tool
 metadata tests. A live Foundry comparison is deliberately pending: it must be run
 against the configured deployments by the person who owns their credentials, and
 its output should be appended here without secrets or request bodies.
+
+### 2026-11-09 system prompt A/B (issue #19): not run
+
+The prompt and tool-description rewrite is covered by unit tests only. The live
+comparison of the pre-#19 prompt against the current prompt was not run, because
+no Foundry credentials were available in the environment where this change was
+made. No results are claimed here.
+
+To run it, with `FOUNDRY_KEY` and `FOUNDRY_ENDPOINT` set (environment or
+`~/.oqelira/.env`):
+
+    npm run prompt:eval                              # every configured deployment
+    PROMPT_EVAL_MODELS=gpt-6-sol npm run prompt:eval  # one deployment
+
+It writes `docs/prompt-tuning.md` with a PASS/FAIL table per task, model, and
+prompt, plus failure details. The six tasks are defined in
+`packages/core/eval/prompt-eval.ts`.
