@@ -84,12 +84,12 @@ Record host kernel, Docker and runsc versions, worker image digest, commands and
 | Check | How | Expected | Result |
 | --- | --- | --- | --- |
 | Runtime is gVisor | `docker run --rm --runtime=runsc <image> dmesg` | "Starting gVisor" | PASS 2026-11-10: guest kernel reports `4.19.0-gvisor` (runsc release-20261102.0) |
-| No Docker socket | worker: `ls /var/run/docker.sock` | absent | |
-| Metadata blocked | worker: fetch `169.254.169.254` | no network | |
-| Sibling volume | worker: look for other `/var/lib/oqelira` or `oq-project-*` | not visible | |
-| Devices/mounts | worker: `ls /dev`, `cat /proc/mounts`, `mount` attempt | minimal, denied | |
-| Credential paths | worker: read `/etc/oqelira`, `/root`, host env | not visible | |
-| Write outside workspace | worker: `touch /x` | read-only error | |
+| No Docker socket | worker: `ls /var/run/docker.sock` | absent | PASS 2026-11-10: `/var/run/docker.sock` and `/run/docker.sock` absent |
+| Metadata blocked | worker: fetch `169.254.169.254` | no network | PASS 2026-11-10: fetch to 169.254.169.254 fails with ENETUNREACH |
+| Sibling volume | worker: look for other `/var/lib/oqelira` or `oq-project-*` | not visible | PASS 2026-11-10: no `/var/lib/oqelira` or `/var/lib/docker`; only `/workspace` is an `oq-project` mount |
+| Devices/mounts | worker: `ls /dev`, `cat /proc/mounts`, `mount` attempt | minimal, denied | PASS 2026-11-10: `/dev` has the standard gVisor set (it also lists `fuse` and `net`, unusable with no capabilities); `mount` refused; all capability sets are 0 |
+| Credential paths | worker: read `/etc/oqelira`, `/root`, host env | not visible | PASS 2026-11-10: `/etc/oqelira` absent, `/root` denied, no secret-looking environment variables |
+| Write outside workspace | worker: `touch /x` | read-only error | PASS 2026-11-10: `/x` and `/etc/x` give Permission denied |
 | Quota enforced | in a worker `dd if=/dev/zero of=/workspace/big bs=1M count=3000` | stops at 2 GiB | PASS 2026-11-10 with synchronous writes: stopped at 2048 MiB, report shows 2.0G of 2G hard. NOTE: buffered writes (`bs=1M count=3000`) are OOM-killed at the 512 MiB worker memory limit (about 550 MiB written, exit 137) before the quota is reached; large legitimate installs may hit this |
 | Quota gap | time from first volume creation to quota applied (`xfs_quota -x -c 'report -p' /var/lib/oqelira`) | at most 60 s | |
 | Auth | `curl` /execute without token / wrong token / GET | 401 / 401 / 401 or 404 | PARTIAL 2026-11-10: no token gives 401; wrong token and GET not tried |
