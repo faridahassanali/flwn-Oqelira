@@ -1,38 +1,13 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { readNoFollow, resolveInside as resolveContained, writeNoFollow } from './contain.mjs'
 import { optNum, str, truncate } from './types.js'
 import type { Tool } from './types.js'
 
-function isInside(root: string, target: string): boolean {
-  const rel = path.relative(root, target)
-  return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel))
-}
+const sensitive = /(^|\/)(\.git|\.oqelira|\.ssh|\.azure|\.aws|\.env(?!\.example(?:\/|$))(?:\.[^/]*)?)(\/|$)|\.(pem|key|pfx|p12)$/i
 
-/**
- * Resolve `p` against the workspace and make sure the result stays inside it, even through
- * symlinks: the nearest existing ancestor is realpath'ed before the check.
- */
-export async function resolveInside(cwd: string, p: string): Promise<string> {
-  const root = await fs.realpath(cwd)
-  const abs = path.resolve(root, p)
-  const sensitive = /(^|\/)(\.git|\.oqelira|\.ssh|\.azure|\.aws|\.env(?!\.example(?:\/|$))(?:\.[^/]*)?)(\/|$)|\.(pem|key|pfx|p12)$/i
-  if (sensitive.test(path.relative(root, abs).replaceAll('\\', '/'))) throw new Error('Credential and internal paths are excluded')
-  let probe = abs
-  for (;;) {
-    try {
-      const real = await fs.realpath(probe)
-      const resolved = path.join(real, path.relative(probe, abs))
-      if (!isInside(root, resolved)) throw new Error(`path is outside the workspace: ${p}`)
-      if (sensitive.test(path.relative(root, resolved).replaceAll('\\', '/'))) throw new Error('Credential and internal paths are excluded')
-      return resolved
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e
-      const parent = path.dirname(probe)
-      if (parent === probe) throw new Error(`cannot resolve path: ${p}`)
-      probe = parent
-    }
-  }
-}
+/** Resolve `p` inside the workspace, refusing symlink escapes (including dangling links); see contain.mjs. */
+export const resolveInside = (cwd: string, p: string): Promise<string> => resolveContained(cwd, p, sensitive)
 
 export const readFile: Tool = {
   spec: {
@@ -52,7 +27,7 @@ export const readFile: Tool = {
   describe: (i) => `read ${str(i, 'path')}`,
   async run(input, ctx) {
     const file = await resolveInside(ctx.cwd, str(input, 'path'))
-    const text = await fs.readFile(file, 'utf8')
+    const text = await readNoFollow(file)
     const start = optNum(input, 'start_line')
     const end = optNum(input, 'end_line')
     if (start === undefined && end === undefined) return truncate(text)
@@ -97,7 +72,7 @@ export const writeFile: Tool = {
   async run(input, ctx) {
     const file = await resolveInside(ctx.cwd, str(input, 'path'))
     await fs.mkdir(path.dirname(file), { recursive: true })
-    await fs.writeFile(file, str(input, 'content'), 'utf8')
+    await writeNoFollow(file, str(input, 'content'))
     return `wrote ${str(input, 'path')}`
   },
 }
@@ -119,11 +94,11 @@ export const editFile: Tool = {
     const file = await resolveInside(ctx.cwd, str(input, 'path'))
     const oldStr = str(input, 'old_string')
     if (oldStr === '') throw new Error('old_string must not be empty')
-    const text = await fs.readFile(file, 'utf8')
+    const text = await readNoFollow(file)
     const count = text.split(oldStr).length - 1
     if (count === 0) throw new Error('old_string not found in file')
     if (count > 1) throw new Error(`old_string is not unique (${count} matches); add more context`)
-    await fs.writeFile(file, text.replace(oldStr, () => str(input, 'new_string')), 'utf8')
+    await writeNoFollow(file, text.replace(oldStr, () => str(input, 'new_string')))
     return `edited ${str(input, 'path')}`
   },
 }

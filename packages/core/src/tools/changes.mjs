@@ -30,7 +30,7 @@ export async function snapshotFile(cwd,name){
   try{
     const stat=await fs.lstat(resolved.file)
     if(!stat.isFile()||stat.nlink!==1||stat.size>40000)throw new Error('Changes support unlinked UTF-8 text files of at most 10000 characters')
-    const handle=await fs.open(resolved.file,'r');let bytes
+    const handle=await fs.open(resolved.file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);let bytes
     try{const buffer=Buffer.alloc(40001);const read=await handle.read(buffer,0,buffer.length,0);bytes=buffer.subarray(0,read.bytesRead)}finally{await handle.close()}
     const content=bytes.toString('utf8')
     if(bytes.length>40000||content.length>10000||content.includes('\0')||!Buffer.from(content).equals(bytes))throw new Error('Changes support UTF-8 text files of at most 10000 characters')

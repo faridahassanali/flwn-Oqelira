@@ -1,34 +1,15 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
+import { resolveInside, readNoFollow, writeNoFollow } from '../core/src/tools/contain.mjs'
 import { searchWorkspace } from '../core/src/tools/search-engine.mjs'
 import { snapshotFile, applyFileChange, readFileChange } from '../core/src/tools/changes.mjs'
 
 const root = await fs.realpath(process.env.OQELIRA_WORKER_ROOT ?? '/workspace')
-const isInside = p => { const rel = path.relative(root, p); return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel)) }
 const blocked = /(^|\/)(\.env(?!\.example(?:\/|$))(?:\.[^/]*)?|\.git|\.oqelira|\.ssh|\.azure|\.aws|node_modules)(\/|$)|\.(pem|key|pfx|p12)$/i
 const truncate = text => text.length > 30000 ? text.slice(0, 30000) + '\n[truncated]' : text
 function str(input, key) { if (typeof input?.[key] !== 'string') throw new Error(`Expected ${key}`); return input[key] }
-async function inside(p) {
-  if (blocked.test(p.replaceAll('\\', '/'))) throw new Error('Credential and internal paths are excluded')
-  const abs = path.resolve(root, p)
-  if (!isInside(abs)) throw new Error('Path is outside project')
-  let probe = abs
-  for (;;) {
-    try {
-      const real = await fs.realpath(probe)
-      const resolved = path.join(real, path.relative(probe, abs))
-      if (!isInside(resolved)) throw new Error('Symlink escapes project')
-      if (blocked.test(path.relative(root, resolved).replaceAll('\\', '/'))) throw new Error('Credential and internal paths are excluded')
-      return resolved
-    } catch (e) {
-      if (e.code !== 'ENOENT') throw e
-      const parent = path.dirname(probe)
-      if (parent === probe) throw new Error('Cannot resolve project path')
-      probe = parent
-    }
-  }
-}
+const inside = p => resolveInside(root, p, blocked)
 async function tool(name, input) {
   if (name === 'file_snapshot') return JSON.stringify(await snapshotFile(root, str(input, 'path')))
   if (name === 'apply_file_change' || name === 'revert_file_change') return applyFileChange(root, input, name === 'revert_file_change')
@@ -55,20 +36,20 @@ async function tool(name, input) {
   if (name === 'read_file') {
     const stat = await fs.stat(file)
     if (stat.size > 1_000_000) throw new Error('File is too large')
-    const text = await fs.readFile(file, 'utf8')
+    const text = await readNoFollow(file)
     if (text.includes('\0')) throw new Error('Binary files are unsupported')
     const start = input.start_line ?? 1, end = input.end_line
     if (!Number.isInteger(start) || start < 1 || (end !== undefined && (!Number.isInteger(end) || end < start))) throw new Error('Invalid line range')
     return truncate(text.split('\n').slice(start - 1, end).join('\n'))
   }
-  if (name === 'write_file') { const text = str(input, 'content'); if (text.length > 1_000_000) throw new Error('File is too large'); await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, text); return 'wrote ' + input.path }
+  if (name === 'write_file') { const text = str(input, 'content'); if (text.length > 1_000_000) throw new Error('File is too large'); await fs.mkdir(path.dirname(file), { recursive: true }); await writeNoFollow(file, text); return 'wrote ' + input.path }
   if (name === 'edit_file') {
     const old = str(input, 'old_string'), replacement = str(input, 'new_string')
     if (!old) throw new Error('Empty match')
     const stat = await fs.stat(file); if (stat.size > 1_000_000) throw new Error('File is too large')
-    const text = await fs.readFile(file, 'utf8')
+    const text = await readNoFollow(file)
     if (text.split(old).length !== 2) throw new Error('Match must occur exactly once')
-    await fs.writeFile(file, text.replace(old, () => replacement)); return 'edited ' + input.path
+    await writeNoFollow(file, text.replace(old, () => replacement)); return 'edited ' + input.path
   }
   throw new Error('Unknown tool')
 }
