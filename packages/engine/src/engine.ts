@@ -33,6 +33,7 @@ import { gitDiff, gitHistory, sessionFiles } from './git.js'
 import type { GitCommitDiff, GitCommitSummary } from './git.js'
 import { openCustomizations } from './customizations.js'
 import type { CustomCommand, HookEvent } from './customizations.js'
+import { createSubagentTool } from './subagents.js'
 
 export interface EngineOptions {
   cwd: string
@@ -138,7 +139,9 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
       startupNotices.push(`Project memory disabled: ${(e as Error).message}`)
     }
   }
-  const tools: Tool[] = [...builtinTools, ...webTools(), ...(memory ? memoryTools(memory) : [])]
+  let recordSubagentUsage: (reported: { inputTokens?: number; outputTokens?: number }) => void = () => {}
+  // The subagent gets a fixed safe subset of built-in read tools, never this full main-agent list.
+  const tools: Tool[] = [...builtinTools, createSubagentTool({ provider: () => makeProvider(model), tools: builtinTools, onUsage: (reported) => recordSubagentUsage(reported) }), ...webTools(), ...(memory ? memoryTools(memory) : [])]
   const autoAllow: Risk[] = ['read', ...(opts.yes || opts.yolo ? (['write'] as Risk[]) : []), ...(opts.yolo ? (['exec', 'network'] as Risk[]) : [])]
   const rules = openRules(cwd, stateRoot)
   const customizations = openCustomizations(cwd, stateRoot)
@@ -188,6 +191,7 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
   const contextChars = opts.contextChars ?? 80_000
   const maxContinues = opts.maxContinues ?? 3
   const usage = new UsageTracker(store, usageLimits)
+  recordSubagentUsage = (reported) => usage.record(model.id, reported)
   const runHooks = async (event: HookEvent, toolName: string | undefined, io: { signal?: AbortSignal; approve?: Approver; onEvent?: (event: HostEvent) => void }) => {
     for (const hook of customizations.hooksFor(event, toolName)) {
       const request: ApprovalRequest = { tool: 'run_hook', risk: 'exec', summary: `hook ${hook.id} (${event}): ${hook.command}`, input: { id: hook.id, event, command: hook.command, tool: toolName } }
