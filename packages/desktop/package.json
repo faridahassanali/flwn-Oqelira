@@ -6,7 +6,8 @@
   "main": "main.mjs",
   "scripts": {
     "start": "npm run build -w @oqelira/web && electron .",
-    "check": "node --check main.mjs"
+    "check": "node --check main.mjs && node --check gateway-store.mjs",
+    "test": "node --test test/gateway-store.test.mjs"
   },
   "devDependencies": {
     "electron": "^42.0.0"
