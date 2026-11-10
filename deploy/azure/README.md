@@ -110,7 +110,12 @@ the point of the gateway.
 | `OQELIRA_GATEWAY_5H_TOKENS`, `OQELIRA_GATEWAY_WEEKLY_TOKENS`, `OQELIRA_GATEWAY_RPM` | Optional limits |
 
 Set `OQELIRA_GATEWAY_TOKEN_KEY` and `OQELIRA_GATEWAY_DATABASE_URL` on the API server to enable
-`POST /api/gateway/token` and `/api/gateway/revoke`.
+`POST /api/gateway/token`, `/api/gateway/revoke` and `/api/gateway/unrevoke`.
+
+Revoking is per user and takes effect on the next request. `revoke` with no `userId` revokes the
+caller; with `userId` the caller must be an owner or admin of an organization the target belongs to.
+`unrevoke` requires `userId` under the same rule and is refused for yourself, so a stolen session
+cannot undo a revoke. Failures all return 403. Neither action is written to an audit log.
 
 ## Primary references
 
