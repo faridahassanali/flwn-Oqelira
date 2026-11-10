@@ -347,8 +347,89 @@ export interface EvalRun {
   /** 1-based repeat number. */
   rep: number
   ok: boolean
+  /** True when the endpoint failed even after retries. The run says nothing about the prompt: it is not a FAIL and is excluded from pass-rate denominators. */
+  error?: boolean
   detail: string
   steps: number
+  /** Model requests sent for this run, including retries. */
+  requests?: number
+  /** Retries after a rate limit or server error. */
+  retries?: number
+  /** Prompt tokens summed over the run's requests, when the provider reports usage. */
+  inputTokens?: number
+}
+
+export interface RetryPolicy {
+  /** Retries per request after the first attempt (default 4). */
+  maxRetries: number
+  baseMs: number
+  maxMs: number
+  sleep: (ms: number) => Promise<void>
+  random: () => number
+}
+const DEFAULT_RETRY: RetryPolicy = { maxRetries: 4, baseMs: 2000, maxMs: 60_000, sleep: ms => new Promise(r => setTimeout(r, ms)), random: Math.random }
+
+interface ErrorLike { message?: string; statusCode?: number; status?: number; responseHeaders?: Record<string, string>; cause?: unknown }
+
+/** foundry.ts rethrows the SDK's APICallError as is: it carries statusCode and responseHeaders, and its message is the endpoint's error text. Duck-typed so this file never imports the SDK. */
+export function errorStatus(error: unknown): number | undefined {
+  const e = error as ErrorLike
+  return e?.statusCode ?? e?.status ?? (e?.cause ? errorStatus(e.cause) : undefined)
+}
+
+export function isRateLimit(error: unknown): boolean {
+  if (errorStatus(error) === 429) return true
+  const message = error instanceof Error ? error.message : String(error)
+  return /rate.?limit|too many requests|throttl|tokens? per minute|\bTPM\b|quota.*exceeded/i.test(message)
+}
+
+/** Worth another request: a rate limit or a 5xx. Anything else (400, auth, unknown model) will not get better. */
+export function isRetryable(error: unknown): boolean {
+  const status = errorStatus(error)
+  return isRateLimit(error) || (status !== undefined && status >= 500)
+}
+
+/** Retry-After as milliseconds (seconds or an HTTP date), or undefined. */
+export function retryAfterMs(error: unknown, now = Date.now()): number | undefined {
+  const headers = (error as ErrorLike)?.responseHeaders
+  const raw = headers && Object.entries(headers).find(([k]) => k.toLowerCase() === 'retry-after')?.[1]
+  if (!raw) return undefined
+  const secs = Number(raw)
+  if (Number.isFinite(secs)) return Math.max(0, secs * 1000)
+  const at = Date.parse(raw)
+  return Number.isNaN(at) ? undefined : Math.max(0, at - now)
+}
+
+/** Exponential backoff with full jitter on the upper half; a Retry-After value is a floor. */
+export function backoffMs(attempt: number, error: unknown, policy: Pick<RetryPolicy, 'baseMs' | 'maxMs' | 'random'>): number {
+  const exp = Math.min(policy.maxMs, policy.baseMs * 2 ** attempt)
+  const jittered = exp / 2 + policy.random() * (exp / 2)
+  return Math.min(policy.maxMs, Math.max(jittered, retryAfterMs(error) ?? 0))
+}
+
+/** Retries a request when it failed before yielding anything (so no half-streamed step is replayed), and counts requests and prompt tokens. */
+function withRetry(inner: ModelProvider, policy: RetryPolicy, stats: { requests: number; retries: number; inputTokens: number }): ModelProvider {
+  return {
+    id: inner.id,
+    async *stream(req) {
+      for (let attempt = 0; ; attempt++) {
+        stats.requests++
+        let started = false
+        try {
+          for await (const event of inner.stream(req)) {
+            started = true
+            if (event.type === 'finish') stats.inputTokens += event.usage?.inputTokens ?? 0
+            yield event
+          }
+          return
+        } catch (error) {
+          if (started || attempt >= policy.maxRetries || !isRetryable(error)) throw error
+          stats.retries++
+          await policy.sleep(backoffMs(attempt, error, policy))
+        }
+      }
+    },
+  }
 }
 
 export interface PromptEvalOptions {
@@ -363,6 +444,8 @@ export interface PromptEvalOptions {
   repeats?: number
   /** Parallel runs (default 1). Results keep a deterministic order regardless. */
   concurrency?: number
+  /** Overrides for tests: backoff timing and sleeping. */
+  retry?: Partial<RetryPolicy>
   onRun?: (run: EvalRun) => void
 }
 
@@ -380,7 +463,7 @@ export async function runPromptEval(opts: PromptEvalOptions): Promise<EvalRun[]>
   const worker = async () => {
     for (let i = next++; i < jobs.length; i = next++) {
       const { model, prompt, system, task, rep } = jobs[i]!
-      const run = await runOne({ ...opts, model, system, task })
+      const run = await runAttempt({ ...opts, model, system, task })
       runs[i] = { model: model.id, prompt, task: task.id, rep, ...run }
       opts.onRun?.(runs[i]!)
     }
@@ -389,14 +472,9 @@ export async function runPromptEval(opts: PromptEvalOptions): Promise<EvalRun[]>
   return runs
 }
 
-/** One retry on a thrown error (a transient endpoint failure), so infrastructure noise is not counted as a model failure. */
-async function runOne(opts: Omit<PromptEvalOptions, 'models' | 'prompts' | 'tasks' | 'repeats' | 'concurrency'> & { model: ModelConfig; system: string; task: EvalTask }): Promise<Omit<EvalRun, 'model' | 'prompt' | 'task' | 'rep'>> {
-  const first = await runAttempt(opts)
-  return first.detail.startsWith('run error:') ? runAttempt(opts) : first
-}
-
 async function runAttempt(opts: Omit<PromptEvalOptions, 'models' | 'prompts' | 'tasks' | 'repeats' | 'concurrency'> & { model: ModelConfig; system: string; task: EvalTask }): Promise<Omit<EvalRun, 'model' | 'prompt' | 'task' | 'rep'>> {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'oqelira-prompt-eval-'))
+  const stats = { requests: 0, retries: 0, inputTokens: 0 }
   try {
     for (const [rel, content] of Object.entries(opts.task.files)) {
       await fs.mkdir(path.dirname(path.join(cwd, rel)), { recursive: true })
@@ -405,7 +483,7 @@ async function runAttempt(opts: Omit<PromptEvalOptions, 'models' | 'prompts' | '
     const toolCalls: string[] = []
     const approvals: RunRecord['approvals'] = []
     const result = await runAgent({
-      provider: opts.provider(opts.model),
+      provider: withRetry(opts.provider(opts.model), { ...DEFAULT_RETRY, ...opts.retry }, stats),
       prompt: opts.task.prompt,
       system: opts.system,
       tools: opts.tools ?? builtinTools,
@@ -423,16 +501,16 @@ async function runAttempt(opts: Omit<PromptEvalOptions, 'models' | 'prompts' | '
       onToolResult: (result) => opts.task.afterTool?.(cwd, result.name),
     })
     const check = await opts.task.check(cwd, { text: result.text, toolCalls, approvals })
-    return { ok: check.ok, detail: check.detail, steps: result.steps }
+    return { ok: check.ok, detail: check.detail, steps: result.steps, ...stats }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    return { ok: false, detail: `run error: ${message.slice(0, 200)}`, steps: 0 }
+    return { ok: false, error: true, detail: `${isRateLimit(error) ? 'rate limit' : 'endpoint error'} after ${stats.retries} retries: ${message.slice(0, 200)}`, steps: 0, ...stats }
   } finally {
     await fs.rm(cwd, { recursive: true, force: true })
   }
 }
 
-/** Markdown table: one row per task, one column per model and prompt, then pass totals. */
+/** Markdown table: one row per task, one column per model and prompt, then pass totals over valid runs. ERROR runs (endpoint failed after retries) are counted separately and never as FAIL. */
 export function renderResults(runs: readonly EvalRun[], meta: { date: string; mode: string }): string {
   const models = [...new Set(runs.map(r => r.model))]
   const prompts = [...new Set(runs.map(r => r.prompt))]
@@ -440,8 +518,11 @@ export function renderResults(runs: readonly EvalRun[], meta: { date: string; mo
   const cell = (model: string, prompt: string, task: string) => {
     const hits = runs.filter(r => r.model === model && r.prompt === prompt && r.task === task)
     if (!hits.length) return '-'
-    if (hits.length === 1) return hits[0]!.ok ? 'PASS' : 'FAIL'
-    return `${hits.filter(r => r.ok).length}/${hits.length}`
+    const valid = hits.filter(r => !r.error)
+    const errors = hits.length - valid.length
+    const errs = errors ? ` (${errors} ERROR)` : ''
+    if (hits.length === 1) return hits[0]!.error ? 'ERROR' : hits[0]!.ok ? 'PASS' : 'FAIL'
+    return valid.length ? `${valid.filter(r => r.ok).length}/${valid.length}${errs}` : `ERROR x${errors}`
   }
   const columns = models.flatMap(m => prompts.map(p => ({ m, p, label: `${m} / ${p}` })))
   const lines = [
@@ -451,11 +532,18 @@ export function renderResults(runs: readonly EvalRun[], meta: { date: string; mo
     `| --- | ${columns.map(() => '---').join(' | ')} |`,
     ...tasks.map(t => `| ${t} | ${columns.map(c => cell(c.m, c.p, t)).join(' | ')} |`),
     `| **passed** | ${columns.map(c => {
+      const valid = runs.filter(r => r.model === c.m && r.prompt === c.p && !r.error)
+      return `**${valid.filter(r => r.ok).length}/${valid.length}**`
+    }).join(' | ')} |`,
+    `| errors (excluded) | ${columns.map(c => runs.filter(r => r.model === c.m && r.prompt === c.p && r.error).length).join(' | ')} |`,
+    `| requests / prompt tokens per request | ${columns.map(c => {
       const mine = runs.filter(r => r.model === c.m && r.prompt === c.p)
-      return `**${mine.filter(r => r.ok).length}/${mine.length}**`
+      const req = mine.reduce((n, r) => n + (r.requests ?? 0), 0)
+      const tok = mine.reduce((n, r) => n + (r.inputTokens ?? 0), 0)
+      return tok && req ? `${req} / ${Math.round(tok / req)}` : `${req} / n/a`
     }).join(' | ')} |`,
   ]
-  const details = runs.filter(r => !r.ok).map(r => `- ${r.model} / ${r.prompt} / ${r.task}${runs.some(x => x.rep > 1) ? ` (run ${r.rep})` : ''}: ${r.detail}`)
-  if (details.length) lines.push('', 'Failures:', ...details)
+  const details = runs.filter(r => !r.ok).map(r => `- ${r.error ? 'ERROR ' : ''}${r.model} / ${r.prompt} / ${r.task}${runs.some(x => x.rep > 1) ? ` (run ${r.rep})` : ''}: ${r.detail}`)
+  if (details.length) lines.push('', 'Failures and errors:', ...details.map(d => d))
   return lines.join('\n') + '\n'
 }

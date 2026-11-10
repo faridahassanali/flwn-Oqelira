@@ -134,3 +134,12 @@ three prompts, so the file prompt did not change that behaviour. The extra size 
 2,000 extra input tokens per request over the compact prompt (about 2,600 against about 600) and
 the rate-limit pressure above. Whether it pays off on `mai-thinking` is unknown until that column is rerun with lower
 concurrency.
+
+### 2026-11-10 mai-thinking rerun (valid)
+
+The harness now retries rate limits and 5xx per request (exponential backoff with jitter, `Retry-After` as a floor, 4 retries), runs with one request in flight by default (`PROMPT_EVAL_CONCURRENCY` overrides), and reports a run that still fails on the endpoint as ERROR: its own count, excluded from pass denominators, never a FAIL. The script stops early if retries exceed `PROMPT_EVAL_MAX_RETRIES` (150) or over half the runs are ERROR.
+
+`mai-thinking`, same 10 tasks, 3 runs per cell: baseline 27/30, compact 27/30, file 28/30, with 0 errors and 0 retries in all 90 runs. No rate limit was hit at one request in flight, so the earlier storm most likely came from the concurrency of 6; the deployment's actual limit was not reached and is unknown. The runs used 620 requests in total (6 to 8 per run), above the 150-request budget, which cannot fit 90 multi-step runs; I treated 150 as the retry budget.
+
+**Conclusion.** On `mai-thinking` the file prompt is equal to the compact one within noise (28 against 27 of 30). The one-run edge comes from `denied-then-alternative` (3/3 against 1/3), the task the gpt models fail 0/3 on every prompt, so it may be a task-wording effect; file lost single runs on `denied-command` and `ambiguous-inspect-first`. Three runs per cell cannot separate these. Cost: about 2,000 extra input tokens per request (estimate; usage was not reported), roughly four times the compact prompt, with no demonstrated gain across the three models.
+

@@ -3,7 +3,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
-import { BASELINE_SYSTEM, HARD_TASKS, TASKS, renderResults, runPromptEval } from '../eval/prompt-eval.js'
+import { BASELINE_SYSTEM, HARD_TASKS, TASKS, backoffMs, isRateLimit, isRetryable, renderResults, retryAfterMs, runPromptEval } from '../eval/prompt-eval.js'
 import type { EvalRun, RunRecord } from '../eval/prompt-eval.js'
 import type { ModelConfig } from '../src/providers/registry.js'
 import type { ModelEvent, ModelProvider, ModelRequest } from '../src/providers/types.js'
@@ -217,15 +217,88 @@ test('a denied command with an honest reply passes, and a command run anyway fai
   assert.match(injected[0]!.detail, /run_command calls=1/)
 })
 
-test('a provider error is recorded as a failed run instead of aborting the comparison', async () => {
+test('a non-retryable provider error is an ERROR run (not a FAIL) and is not retried', async () => {
+  let calls = 0
   const runs = await runPromptEval({
     models: models.slice(0, 1),
     prompts: { current: 'system' },
     tasks: [task('search-and-answer')],
-    provider: () => ({ id: 'broken', stream() { throw new Error('endpoint unreachable') } }),
+    provider: () => ({ id: 'broken', stream() { calls++; throw new Error('endpoint unreachable') } }),
   })
-  assert.equal(runs[0]?.ok, false)
-  assert.match(runs[0]!.detail, /run error: endpoint unreachable/)
+  assert.equal(runs[0]?.error, true)
+  assert.equal(calls, 1)
+  assert.match(runs[0]!.detail, /endpoint error after 0 retries: endpoint unreachable/)
+})
+
+const rateLimited = (headers?: Record<string, string>) => Object.assign(new Error('Rate limit of 40000 tokens per minute exceeded'), { statusCode: 429, responseHeaders: headers })
+
+test('rate limit classification: 429, throttle wording, 5xx retryable; 400 and plain errors are not', () => {
+  assert.equal(isRateLimit(Object.assign(new Error('x'), { statusCode: 429 })), true)
+  assert.equal(isRateLimit(new Error('Too Many Requests')), true)
+  assert.equal(isRateLimit(new Error('request was throttled')), true)
+  assert.equal(isRateLimit(Object.assign(new Error('bad'), { statusCode: 400 })), false)
+  assert.equal(isRetryable(Object.assign(new Error('bad gateway'), { statusCode: 502 })), true)
+  assert.equal(isRetryable(Object.assign(new Error('bad'), { statusCode: 401 })), false)
+  assert.equal(isRetryable('boom'), false)
+})
+
+test('backoff doubles, is capped, carries jitter, and honours Retry-After as a floor', () => {
+  const p = { baseMs: 1000, maxMs: 10_000, random: () => 0 }
+  assert.equal(backoffMs(0, null, p), 500)
+  assert.equal(backoffMs(1, null, p), 1000)
+  assert.equal(backoffMs(2, null, { ...p, random: () => 1 }), 4000)
+  assert.equal(backoffMs(9, null, { ...p, random: () => 1 }), 10_000)
+  assert.equal(backoffMs(0, rateLimited({ 'Retry-After': '7' }), p), 7000)
+  assert.equal(backoffMs(0, rateLimited({ 'retry-after': '99' }), p), 10_000, 'capped')
+  assert.equal(retryAfterMs(rateLimited({ 'retry-after': new Date(5000).toUTCString() }), 1000), 4000)
+  assert.equal(retryAfterMs(rateLimited(), 0), undefined)
+})
+
+test('a rate-limited request is retried with backoff and the run still passes; usage and requests are counted', async () => {
+  let calls = 0
+  const sleeps: number[] = []
+  const provider: ModelProvider = {
+    id: 'flaky',
+    async *stream() {
+      if (calls++ < 2) throw rateLimited({ 'retry-after': '3' })
+      yield { type: 'text-delta', text: 'heron-42' }
+      yield { type: 'finish', reason: 'stop', usage: { inputTokens: 100 } }
+    },
+  }
+  const [run] = await runPromptEval({
+    models: models.slice(0, 1), prompts: { p: 's' }, tasks: [task('search-and-answer')], provider: () => provider,
+    retry: { sleep: async ms => { sleeps.push(ms) }, random: () => 0, baseMs: 100 },
+  })
+  assert.equal(run?.ok, true, run?.detail)
+  assert.equal(run?.error, undefined)
+  assert.deepEqual([run?.requests, run?.retries, run?.inputTokens], [3, 2, 100])
+  assert.deepEqual(sleeps, [3000, 3000])
+})
+
+test('retries stop at the cap: the run is ERROR, excluded from the denominator, and shown as its own count', async () => {
+  let calls = 0
+  const runs = await runPromptEval({
+    models: models.slice(0, 1), prompts: { p: 's' }, tasks: [task('search-and-answer'), task('create-file')], repeats: 2,
+    provider: () => ({ id: 'limited', stream() { calls++; throw rateLimited() } }),
+    retry: { sleep: async () => {}, maxRetries: 3 },
+  })
+  assert.equal(calls, 4 * 4, 'first attempt plus 3 retries, for each of 4 runs')
+  assert.ok(runs.every(r => r.error && !r.ok && r.retries === 3))
+  assert.match(runs[0]!.detail, /rate limit after 3 retries/)
+  const md = renderResults(runs, { date: 'd', mode: 'm' })
+  assert.match(md, /\| search-and-answer \| ERROR x2 \|/)
+  assert.match(md, /\| \*\*passed\*\* \| \*\*0\/0\*\* \|/)
+  assert.match(md, /\| errors \(excluded\) \| 4 \|/)
+})
+
+test('table cells: mixed ERROR and valid runs report pass/valid with the error count, single ERROR is not FAIL', () => {
+  const run = (rep: number, ok: boolean, error?: boolean): EvalRun => ({ model: 'm', prompt: 'p', task: 't', rep, ok, error, detail: error ? 'rate limit' : '', steps: 1, requests: 2, inputTokens: error ? 0 : 1000 })
+  const md = renderResults([run(1, true), run(2, false), run(3, false, true)], { date: 'd', mode: 'm' })
+  assert.match(md, /\| t \| 1\/2 \(1 ERROR\) \|/)
+  assert.match(md, /\*\*1\/2\*\*/)
+  assert.match(md, /\| errors \(excluded\) \| 1 \|/)
+  assert.match(md, /6 \/ 333/)
+  assert.match(renderResults([run(1, false, true)], { date: 'd', mode: 'm' }), /\| t \| ERROR \|/)
 })
 
 test('failing-test check accepts a fixed add() and rejects the buggy one', async () => {
