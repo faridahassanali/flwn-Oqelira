@@ -112,10 +112,21 @@ the point of the gateway.
 Set `OQELIRA_GATEWAY_TOKEN_KEY` and `OQELIRA_GATEWAY_DATABASE_URL` on the API server to enable
 `POST /api/gateway/token`, `/api/gateway/revoke` and `/api/gateway/unrevoke`.
 
-Revoking is per user and takes effect on the next request. `revoke` with no `userId` revokes the
-caller; with `userId` the caller must be an owner or admin of an organization the target belongs to.
-`unrevoke` requires `userId` under the same rule and is refused for yourself, so a stolen session
-cannot undo a revoke. Failures all return 403. Neither action is written to an audit log.
+Tokens carry an issue time in milliseconds (`iat`); tokens without it are rejected and would have
+expired within 15 minutes anyway. Revocation rows are keyed by user and organization (`org_id = ''` is
+user-global). The gateway refuses a token when a row for (user, '') or (user, token org) is `blocked`,
+or has `valid_after` at or after the token's `iat`.
+
+- `revoke` with no `userId` is a self revoke: every token issued so far dies; mint a fresh one from a
+  signed-in session. It never lifts a block.
+- `revoke` with `userId` and `organizationId` blocks the target for that organization only. The caller
+  must be an owner or admin of it and the target a member. Minting for it is refused until unblocked.
+- `unrevoke` with `userId` and `organizationId` has the same rule, is refused for yourself, and keeps
+  `valid_after`, so tokens issued before the block never come back.
+
+An administrator of one organization cannot affect the target's tokens for any other. Rows from the
+older single-column table migrate to global blocks, which no organization admin can lift; clear them
+in the gateway database. Failures all return 403. Neither action is written to an audit log.
 
 ## Primary references
 

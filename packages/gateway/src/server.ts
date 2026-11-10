@@ -76,7 +76,7 @@ async function handle(d: GatewayDeps, now: () => number, inFlight: Map<string, n
 
   let request: Request
   let warnings: string[]
-  const ctx: Context = { ts: new Date(now()), userId: claims.sub, orgId: claims.org, deviceId: claims.dev, model: '' }
+  const ctx: Context = { ts: new Date(now()), userId: claims.sub, orgId: claims.org, deviceId: claims.dev, model: '', iat: claims.iat }
   try {
     request = parseRequest(await readJson(req), d.config.models)
     ctx.model = request.model.id
@@ -89,11 +89,11 @@ async function handle(d: GatewayDeps, now: () => number, inFlight: Map<string, n
   await forward(d, ctx, request, warnings, res)
 }
 
-interface Context { ts: Date; userId: string; orgId: string; deviceId: string; model: string }
+interface Context { ts: Date; userId: string; orgId: string; deviceId: string; model: string; iat: number }
 
 /** Revocation, inbound content checks and quota. Every rejection is logged before it is answered. */
 async function admit(d: GatewayDeps, now: () => number, ctx: Context, request: Request): Promise<string[]> {
-  if (await isRevoked(d.db, ctx.userId)) throw refuse(401, 'Token revoked')
+  if (await isRevoked(d.db, ctx.userId, ctx.orgId, ctx.iat)) throw refuse(401, 'Token revoked')
 
   const inbound = inspectInbound(request.messages)
   if (inbound.length) {
