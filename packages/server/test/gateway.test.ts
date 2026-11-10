@@ -41,39 +41,38 @@ test('gateway token issuer: sign-in, own orgs only, revocation',{timeout:90000},
   await pool.query('INSERT INTO member (id,"organizationId","userId",role,"createdAt") VALUES ($1,$2,$3,$4,now())',['m-viewer',org.id,bob.id,'viewer'])
   assert.equal((await request('/api/gateway/token',bob.cookie,{organizationId:org.id,deviceId:'d1'})).status,403)
   assert.equal((await request('/api/gateway/revoke','',{})).status,401)
+  const wait=()=>new Promise(r=>setTimeout(r,5))
+  const mint=async(u:{cookie:string},o:string)=>{const r=await request('/api/gateway/token',u.cookie,{organizationId:o,deviceId:'d1'});return r.status===200?(await r.json() as {token:string}).token:r.status}
+  const dead=(t:string|number,u:{id:string},o:string)=>{assert.equal(typeof t,'string');return isRevoked(gwDb,u.id,o,verifyToken(t as string,tokenKey)!.iat)}
+  // self revoke: old token dead, fresh one works, no unrevoke needed
+  const old=await mint(alice,org.id);await wait()
   assert.equal((await request('/api/gateway/revoke',alice.cookie)).status,200)
-  assert.equal(await isRevoked(gwDb,alice.id),true);assert.equal(await isRevoked(gwDb,bob.id),false)
-  assert.equal((await request('/api/gateway/token',alice.cookie,{organizationId:org.id,deviceId:'d1'})).status,403)
- 
-  // admin revoke / un-revoke
+  assert.equal(await dead(old,alice,org.id),true);await wait()
+  const fresh=await mint(alice,org.id);assert.equal(await dead(fresh,alice,org.id),false)
+  // admin block is scoped to one org
   const carol=await signup('carol@example.test')
-  // bob is only a viewer in org, but owns an unrelated org
-  await request('/api/auth/organization/create',bob.cookie,{name:'Bob team',slug:'bob-team'})
   await pool.query('INSERT INTO member (id,"organizationId","userId",role,"createdAt") VALUES ($1,$2,$3,$4,now())',['m-carol',org.id,carol.id,'member'])
-  const mint=async(u:{cookie:string})=>(await request('/api/gateway/token',u.cookie,{organizationId:org.id,deviceId:'d1'})).status
-  assert.equal(await mint(carol),200)
-  // self-revoke, self un-revoke refused, then admin restores
-  assert.equal((await request('/api/gateway/revoke',carol.cookie)).status,200)
-  assert.equal(await mint(carol),403)
-  assert.equal((await request('/api/gateway/unrevoke',carol.cookie,{userId:carol.id})).status,403)
-  assert.equal(await isRevoked(gwDb,carol.id),true)
-  // non-admin and unrelated-org admin cannot act; same 403 for unknown targets
-  assert.equal((await request('/api/gateway/unrevoke',bob.cookie,{userId:carol.id})).status,403)
-  assert.equal((await request('/api/gateway/revoke',bob.cookie,{userId:carol.id})).status,403)
-  assert.equal((await request('/api/gateway/revoke',carol.cookie,{userId:alice.id})).status,403)
-  assert.equal((await request('/api/gateway/unrevoke',carol.cookie,{userId:alice.id})).status,403)
-  assert.equal((await request('/api/gateway/revoke',bob.cookie,{userId:'nobody'})).status,403)
-  assert.equal((await request('/api/gateway/unrevoke',alice.cookie,{userId:'nobody'})).status,403)
-  assert.equal((await request('/api/gateway/unrevoke','',{userId:carol.id})).status,401)
-  assert.equal(await isRevoked(gwDb,alice.id),true)
-  assert.equal((await request('/api/gateway/unrevoke',alice.cookie,{userId:carol.id})).status,200)
-  assert.equal(await mint(carol),200)
-  // admin cannot un-revoke self (alice is still revoked from above)
-  assert.equal((await request('/api/gateway/unrevoke',alice.cookie,{userId:alice.id})).status,403)
-  assert.equal(await isRevoked(gwDb,alice.id),true)
-  // admin revoke of a member blocks that member's next token
-  assert.equal((await request('/api/gateway/unrevoke',alice.cookie,{userId:carol.id})).status,200)
-  assert.equal((await request('/api/gateway/revoke',alice.cookie,{userId:carol.id})).status,200)
-  assert.equal(await mint(carol),403)
+  const orgC=await(await request('/api/auth/organization/create',carol.cookie,{name:'Carol team',slug:'carol-team'})).json() as {id:string}
+  const bobTeam=await(await request('/api/auth/organization/create',bob.cookie,{name:'Bob team',slug:'bob-team'})).json() as {id:string}
+  const carolOld=await mint(carol,org.id);await wait()
+  assert.equal((await request('/api/gateway/revoke',alice.cookie,{userId:carol.id})).status,400,'organizationId is required')
+  assert.equal((await request('/api/gateway/revoke',bob.cookie,{userId:carol.id,organizationId:bobTeam.id})).status,403,'target not in that org')
+  assert.equal((await request('/api/gateway/revoke',bob.cookie,{userId:carol.id,organizationId:org.id})).status,403,'viewer is not admin')
+  assert.equal((await request('/api/gateway/revoke',alice.cookie,{userId:'nobody',organizationId:org.id})).status,403)
+  assert.equal((await request('/api/gateway/revoke',alice.cookie,{userId:carol.id,organizationId:org.id})).status,200)
+  assert.equal(await dead(carolOld,carol,org.id),true)
+  assert.equal(await mint(carol,org.id),403)
+  const carolC=await mint(carol,orgC.id);assert.equal(await dead(carolC,carol,orgC.id),false)
+  // collusion: carol (blocked in A) makes accomplice bob admin of her own org; neither can unblock in A
+  await pool.query('INSERT INTO member (id,"organizationId","userId",role,"createdAt") VALUES ($1,$2,$3,$4,now())',['m-bob-c',orgC.id,bob.id,'admin'])
+  assert.equal((await request('/api/gateway/unrevoke',bob.cookie,{userId:carol.id,organizationId:org.id})).status,403)
+  assert.equal((await request('/api/gateway/unrevoke',bob.cookie,{userId:carol.id,organizationId:orgC.id})).status,200,'bob may lift only the org-C row')
+  assert.equal(await mint(carol,org.id),403)
+  assert.equal((await request('/api/gateway/unrevoke',carol.cookie,{userId:carol.id,organizationId:org.id})).status,403,'self cannot unblock')
+  assert.equal((await request('/api/gateway/unrevoke','',{userId:carol.id,organizationId:org.id})).status,401)
+  // unblock keeps valid_after: the pre-block token stays dead, a new one works
+  assert.equal((await request('/api/gateway/unrevoke',alice.cookie,{userId:carol.id,organizationId:org.id})).status,200)
+  assert.equal(await dead(carolOld,carol,org.id),true);await wait()
+  const carolNew=await mint(carol,org.id);assert.equal(await dead(carolNew,carol,org.id),false)
  }finally{await server.close()}
 })

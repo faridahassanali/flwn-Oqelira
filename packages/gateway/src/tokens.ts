@@ -1,12 +1,13 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 
 /** Short-lived user token: `base64url(claims).base64url(HMAC-SHA256)`. `exp` is epoch seconds. */
-export interface TokenClaims { sub: string; org: string; dev: string; exp: number }
+export interface TokenClaims { sub: string; org: string; dev: string; exp: number; iat: number }
+// iat is epoch milliseconds (exp is seconds), so a revoke and a fresh mint are ordered without a one-second race.
 
 const sign = (payload: string, key: Buffer) => createHmac('sha256', key).update(payload).digest('base64url')
 
-export function issueToken(claims: Omit<TokenClaims, 'exp'>, key: Buffer, ttlSeconds: number, now = Date.now()): string {
-  const payload = Buffer.from(JSON.stringify({ ...claims, exp: Math.floor(now / 1000) + ttlSeconds })).toString('base64url')
+export function issueToken(claims: Omit<TokenClaims, 'exp' | 'iat'>, key: Buffer, ttlSeconds: number, now = Date.now()): string {
+  const payload = Buffer.from(JSON.stringify({ ...claims, iat: now, exp: Math.floor(now / 1000) + ttlSeconds })).toString('base64url')
   return `${payload}.${sign(payload, key)}`
 }
 
@@ -18,7 +19,7 @@ export function verifyToken(token: string, key: Buffer, now = Date.now()): Token
   if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null
   try {
     const c = JSON.parse(Buffer.from(payload, 'base64url').toString()) as Partial<TokenClaims>
-    if (typeof c.sub !== 'string' || typeof c.org !== 'string' || typeof c.dev !== 'string' || typeof c.exp !== 'number') return null
+    if (typeof c.sub !== 'string' || typeof c.org !== 'string' || typeof c.dev !== 'string' || typeof c.exp !== 'number' || typeof c.iat !== 'number') return null
     return c.exp * 1000 > now ? (c as TokenClaims) : null
   } catch {
     return null
