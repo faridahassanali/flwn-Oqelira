@@ -12,6 +12,8 @@ let window
 // Token is encrypted at rest and only ever decrypted here, to put it in the host's environment (never a file, never the renderer).
 const gateway = createGatewayStore({ dir: app.getPath('userData'), safeStorage, fs })
 let origin
+// The gateway settings bridge exists only for the local host this app starts itself. A remote server URL gets no preload.
+const localHost = !process.env.OQELIRA_DESKTOP_SERVER_URL
 // Fresh secret per launch: the host refuses any request that lacks it, so only this app can use it.
 const launchToken = randomBytes(32).toString('hex')
 async function startHost() {
@@ -39,7 +41,7 @@ function createWindow() {
   window = new BrowserWindow({
     width: 1480, height: 980, minWidth: 800, minHeight: 600,
     backgroundColor: canvasColor, title: 'Oqelira · by Flwn',
-    webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, preload: fileURLToPath(new URL('./preload.cjs', import.meta.url)) },
+    webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, ...(localHost ? { preload: fileURLToPath(new URL('./preload.cjs', import.meta.url)) } : {}) },
   })
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   window.webContents.on('will-navigate', event => event.preventDefault())
@@ -47,7 +49,12 @@ function createWindow() {
   void window.loadURL(origin)
 }
 // Settings calls are accepted only from our own window, and answer "configured: yes/no" plus the non-secret URL.
-const trusted = event => Boolean(origin) && event.senderFrame?.url.startsWith(origin + '/')
+// Accept settings calls only when the local host is shown, and only from the window's top frame at exactly that origin
+// (no subframes, no other origin that merely starts with the same text).
+const trusted = event => {
+  if (!localHost || !origin || !window || event.senderFrame !== window.webContents.mainFrame) return false
+  try { return new URL(event.senderFrame.url).origin === origin } catch { return false }
+}
 async function restartHost() {
   if (process.env.OQELIRA_DESKTOP_SERVER_URL) return
   host?.removeAllListeners('exit'); host?.disconnect?.(); host?.kill()
