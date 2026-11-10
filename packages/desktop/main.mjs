@@ -1,19 +1,23 @@
-import { app, BrowserWindow, dialog, session } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, session } from 'electron'
 import { randomBytes } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import fs, { readFileSync } from 'node:fs'
+import { createGatewayStore } from './gateway-store.mjs'
 
 const canvasColor = readFileSync(new URL('../ui/src/tokens.css', import.meta.url), 'utf8').match(/--cream:\s*(#[a-f\d]{6})/i)?.[1]
 
 let host
+let window
+// Token is encrypted at rest and only ever decrypted here, to put it in the host's environment (never a file, never the renderer).
+const gateway = createGatewayStore({ dir: app.getPath('userData'), safeStorage, fs })
 let origin
 // Fresh secret per launch: the host refuses any request that lacks it, so only this app can use it.
 const launchToken = randomBytes(32).toString('hex')
 async function startHost() {
   host = spawn(process.execPath, ['--import', 'tsx', 'packages/host/src/main.ts'], {
     cwd: fileURLToPath(new URL('../../', import.meta.url)),
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', OQELIRA_PORT: '0', OQELIRA_LAUNCH_TOKEN: launchToken },
+    env: { ...process.env, ...gateway.env(), ELECTRON_RUN_AS_NODE: '1', OQELIRA_PORT: '0', OQELIRA_LAUNCH_TOKEN: launchToken },
     stdio: ['ignore', 'ignore', 'pipe', 'ipc'], windowsHide: true,
   })
   // Do not display provider diagnostics or environment values in the renderer.
@@ -32,16 +36,37 @@ async function startHost() {
 }
 
 function createWindow() {
-  const window = new BrowserWindow({
+  window = new BrowserWindow({
     width: 1480, height: 980, minWidth: 800, minHeight: 600,
     backgroundColor: canvasColor, title: 'Oqelira · by Flwn',
-    webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true },
+    webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, preload: fileURLToPath(new URL('./preload.cjs', import.meta.url)) },
   })
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   window.webContents.on('will-navigate', event => event.preventDefault())
   window.webContents.once('did-finish-load', () => process.stdout.write('Oqelira desktop renderer loaded\n'))
   void window.loadURL(origin)
 }
+// Settings calls are accepted only from our own window, and answer "configured: yes/no" plus the non-secret URL.
+const trusted = event => Boolean(origin) && event.senderFrame?.url.startsWith(origin + '/')
+async function restartHost() {
+  if (process.env.OQELIRA_DESKTOP_SERVER_URL) return
+  host?.removeAllListeners('exit'); host?.disconnect?.(); host?.kill()
+  origin = await startHost()
+  void window?.loadURL(origin)
+}
+ipcMain.handle('gateway:status', event => { if (!trusted(event)) throw new Error('Not allowed'); return gateway.status() })
+ipcMain.handle('gateway:save', async (event, url, token) => {
+  if (!trusted(event)) throw new Error('Not allowed')
+  gateway.save(url, token)
+  await restartHost()
+  return gateway.status()
+})
+ipcMain.handle('gateway:clear', async event => {
+  if (!trusted(event)) throw new Error('Not allowed')
+  gateway.clear()
+  await restartHost()
+  return gateway.status()
+})
 // Register lifecycle handlers immediately instead of suspending module evaluation.
 void app.whenReady().then(async () => {
   try {
