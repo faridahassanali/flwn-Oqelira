@@ -40,3 +40,14 @@ export async function classifyCommand(provider: ModelProvider, req: ApprovalRequ
     signal?.removeEventListener('abort', abort)
   }
 }
+
+/** The auto-mode gate: only a non-empty `run_command` with risk `exec` reaches the classifier; everything else falls through to the normal prompt. */
+export async function classifierGate(decideCommand: ((command: string) => Promise<{ allow: boolean; reason?: string } | undefined>) | undefined, req: ApprovalRequest): Promise<Decision> {
+  if (!decideCommand || req.risk !== 'exec' || req.tool !== 'run_command') return undefined
+  const command = (req.input as { command?: unknown } | null)?.command
+  if (typeof command !== 'string' || !command.trim()) return undefined
+  try {
+    const result = await decideCommand(command)
+    return result?.allow ? 'allow' : result?.reason ? { decision: undefined, reason: `classifier: ${result.reason}` } : undefined
+  } catch { return undefined }
+}
