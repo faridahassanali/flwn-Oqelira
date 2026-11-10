@@ -5,14 +5,15 @@
  *   Only some models:  PROMPT_EVAL_MODELS=gpt-6-sol npm run prompt:eval
  *
  * Needs FOUNDRY_KEY and FOUNDRY_ENDPOINT (see .env.example). Model ids come from OQELIRA_MODELS_JSON or the registry.
- * Writes docs/prompt-tuning.md. Never prints credentials.
+ * PROMPT_EVAL_SET=easy|hard|all (default easy), PROMPT_EVAL_REPEATS=n, PROMPT_EVAL_CONCURRENCY=n,
+ * PROMPT_EVAL_OUT=path to also write the markdown table. Never prints credentials.
  */
 import fs from 'node:fs/promises'
 import { DEFAULT_SYSTEM } from '../src/agent/prompt.js'
 import { loadEnvFiles } from '../src/config/env.js'
 import { createFoundry, foundryConfigFromEnv } from '../src/providers/foundry.js'
 import { modelsFromEnv } from '../src/providers/registry.js'
-import { BASELINE_SYSTEM, TASKS, renderResults, runPromptEval } from '../eval/prompt-eval.js'
+import { BASELINE_SYSTEM, HARD_TASKS, TASKS, renderResults, runPromptEval } from '../eval/prompt-eval.js'
 
 loadEnvFiles({ cwd: process.cwd() })
 
@@ -31,17 +32,21 @@ if (!models.length) {
   process.exit(2)
 }
 
+const set = process.env.PROMPT_EVAL_SET ?? 'easy'
+const tasks = set === 'hard' ? HARD_TASKS : set === 'all' ? [...TASKS, ...HARD_TASKS] : TASKS
+const only = process.env.PROMPT_EVAL_TASKS?.split(',').map(s => s.trim()).filter(Boolean)
+
 const make = createFoundry(config)
 const runs = await runPromptEval({
   models,
   prompts: { baseline: BASELINE_SYSTEM, current: DEFAULT_SYSTEM },
+  tasks: tasks.filter(t => !only?.length || only.includes(t.id)),
+  repeats: Number(process.env.PROMPT_EVAL_REPEATS ?? 1),
+  concurrency: Number(process.env.PROMPT_EVAL_CONCURRENCY ?? 1),
   provider: make,
-  onRun: r => console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.model} / ${r.prompt} / ${r.task}  (${r.steps} steps)  ${r.detail}`),
+  onRun: r => console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.model} / ${r.prompt} / ${r.task} #${r.rep}  (${r.steps} steps)  ${r.detail}`),
 })
 
-const date = new Date().toISOString().slice(0, 10)
-const body = renderResults(runs, { date, mode: 'Foundry deployments from config' })
-const out = new URL('../../../docs/prompt-tuning.md', import.meta.url)
-const header = '# System prompt tuning (issue #19)\n\nFixed task set: `packages/core/eval/prompt-eval.ts`. Regenerate with `npm run prompt:eval`. Columns compare the pre-#19 prompt (baseline) with the current prompt for each model.\n\n'
-await fs.writeFile(out, header + body, 'utf8')
-console.log(`\nWrote ${out.pathname} (${TASKS.length} tasks, ${runs.length} runs).`)
+const body = renderResults(runs, { date: new Date().toISOString().slice(0, 10), mode: 'Foundry deployments from config' })
+console.log('\n' + body)
+if (process.env.PROMPT_EVAL_OUT) await fs.writeFile(process.env.PROMPT_EVAL_OUT, body, 'utf8')
