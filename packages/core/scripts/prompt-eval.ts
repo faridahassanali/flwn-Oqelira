@@ -1,5 +1,5 @@
 /**
- * Live prompt A/B: BASELINE_SYSTEM (pre-#19) vs DEFAULT_SYSTEM, on every configured deployment.
+ * Live prompt A/B: BASELINE_SYSTEM (pre-#19) vs COMPACT_SYSTEM (8 lines) vs DEFAULT_SYSTEM (system-prompt.txt), on every configured deployment.
  *
  *   (repo root)  npm run prompt:eval
  *   Only some models:  PROMPT_EVAL_MODELS=gpt-6-sol npm run prompt:eval
@@ -13,7 +13,7 @@ import { DEFAULT_SYSTEM } from '../src/agent/prompt.js'
 import { loadEnvFiles } from '../src/config/env.js'
 import { createFoundry, foundryConfigFromEnv } from '../src/providers/foundry.js'
 import { modelsFromEnv } from '../src/providers/registry.js'
-import { BASELINE_SYSTEM, HARD_TASKS, TASKS, renderResults, runPromptEval } from '../eval/prompt-eval.js'
+import { BASELINE_SYSTEM, COMPACT_SYSTEM, HARD_TASKS, TASKS, renderResults, runPromptEval } from '../eval/prompt-eval.js'
 
 loadEnvFiles({ cwd: process.cwd() })
 
@@ -39,7 +39,7 @@ const only = process.env.PROMPT_EVAL_TASKS?.split(',').map(s => s.trim()).filter
 const make = createFoundry(config)
 const runs = await runPromptEval({
   models,
-  prompts: { baseline: BASELINE_SYSTEM, current: DEFAULT_SYSTEM },
+  prompts: { baseline: BASELINE_SYSTEM, compact: COMPACT_SYSTEM, file: DEFAULT_SYSTEM },
   tasks: tasks.filter(t => !only?.length || only.includes(t.id)),
   repeats: Number(process.env.PROMPT_EVAL_REPEATS ?? 1),
   concurrency: Number(process.env.PROMPT_EVAL_CONCURRENCY ?? 1),
