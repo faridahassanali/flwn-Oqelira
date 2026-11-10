@@ -2,7 +2,7 @@
 # Oqelira sandbox runner first-boot configuration.
 # UNTESTED: nothing in this file has been executed on a real VM yet.
 # Placeholders replaced by runner-vm.bicep (none are secrets):
-#   __FQDN__  __QUOTA_GIB__  __STORAGE_ACCOUNT__
+#   __FQDN__  __QUOTA_GIB__  __INODE_LIMIT__  __STORAGE_ACCOUNT__
 # The runner token is generated ON the VM by oqelira-firstboot.sh and is never
 # present in this text, in bicep outputs or in logs.
 package_update: true
@@ -99,7 +99,7 @@ write_files:
       cat > /etc/oqelira/backup.env <<EOF
       OQ_STORAGE_ACCOUNT=__STORAGE_ACCOUNT__
       EOF
-      echo "QUOTA_GIB=__QUOTA_GIB__" > /etc/oqelira/quota.env
+      printf "QUOTA_GIB=__QUOTA_GIB__\nINODE_LIMIT=__INODE_LIMIT__\n" > /etc/oqelira/quota.env
 
       # 10. Caddy + nftables + units.
       install -m 0644 /etc/oqelira/Caddyfile /etc/caddy/Caddyfile
@@ -172,7 +172,7 @@ write_files:
         if [ "$cur" != "$id" ]; then
           # -s sets the project (with inherit flag) on the whole existing tree and new files inherit it.
           xfs_quota -x -c "project -s $name" "$ROOT" >/dev/null
-          xfs_quota -x -c "limit -p bsoft=${QUOTA_GIB}g bhard=${QUOTA_GIB}g $name" "$ROOT"
+          xfs_quota -x -c "limit -p bsoft=${QUOTA_GIB}g bhard=${QUOTA_GIB}g isoft=${INODE_LIMIT:-1000000} ihard=${INODE_LIMIT:-1000000} $name" "$ROOT"
         fi
       done
 
