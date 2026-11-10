@@ -15,7 +15,7 @@ import { RunJournal, tailRun } from './journal.js'
 import type { RunChannel } from './channel.js'
 import {mayWrite,mayAdmin} from './access.js'
 import { issueToken } from '@oqelira/gateway/tokens'
-import { isRevoked, revokeUser } from '@oqelira/gateway/store'
+import { isRevoked, revokeUser, unrevokeUser } from '@oqelira/gateway/store'
 import type { Db } from '@oqelira/gateway/store'
 
 interface Options { auth: Auth; store: Store; channel: RunChannel; sandbox: Sandbox; origin: string; dist: string; models: readonly ModelConfig[]; provider: (model: ModelConfig) => ModelProvider; authCapabilities?:HostConfig['auth']; gateway?: { tokenKey: Buffer; db: Db; ttlSeconds?: number } }
@@ -84,8 +84,23 @@ export function createCloudServer(opts: Options) {
         const ttl = gw.ttlSeconds ?? 900
         reply(res, 200, { token: issueToken({ sub: user, org, dev: device }, gw.tokenKey, ttl), expiresIn: ttl }); return
       }
-      // User-level and permanent, as the gateway implements it: every token for this user dies on its next request.
-      if (req.method === 'POST' && url.pathname === '/api/gateway/revoke') { await revokeUser(gw.db, user); reply(res, 200, { ok: true }); return }
+      // User-level: every token for this user dies on its next request until an admin un-revokes.
+      // Admin actions need owner/admin in an org the target also belongs to; every failure is the same 403 so target existence is not revealed.
+      const adminOver = async (target: string) => {
+        const theirs = new Set((await opts.store.organizations(target)).map(team => team.id))
+        return (await opts.store.organizations(user)).some(team => theirs.has(team.id) && mayAdmin(team.role))
+      }
+      if (req.method === 'POST' && url.pathname === '/api/gateway/revoke') {
+        const data = await body(req), target = data.userId === undefined ? user : text(data.userId, 128)
+        if (target !== user && !await adminOver(target)) throw new HttpError(403, 'Not allowed')
+        await revokeUser(gw.db, target); reply(res, 200, { ok: true }); return
+      }
+      // Never for yourself: a thief holding a revoked session must not be able to undo it.
+      if (req.method === 'POST' && url.pathname === '/api/gateway/unrevoke') {
+        const target = text((await body(req)).userId, 128)
+        if (target === user || !await adminOver(target)) throw new HttpError(403, 'Not allowed')
+        await unrevokeUser(gw.db, target); reply(res, 200, { ok: true }); return
+      }
       throw new HttpError(404, 'Not found')
     }
     if (req.method === 'GET' && url.pathname === '/api/projects') { reply(res, 200, await opts.store.projects(user)); return }

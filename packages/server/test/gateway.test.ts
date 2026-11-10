@@ -44,5 +44,36 @@ test('gateway token issuer: sign-in, own orgs only, revocation',{timeout:90000},
   assert.equal((await request('/api/gateway/revoke',alice.cookie)).status,200)
   assert.equal(await isRevoked(gwDb,alice.id),true);assert.equal(await isRevoked(gwDb,bob.id),false)
   assert.equal((await request('/api/gateway/token',alice.cookie,{organizationId:org.id,deviceId:'d1'})).status,403)
+ 
+  // admin revoke / un-revoke
+  const carol=await signup('carol@example.test')
+  // bob is only a viewer in org, but owns an unrelated org
+  await request('/api/auth/organization/create',bob.cookie,{name:'Bob team',slug:'bob-team'})
+  await pool.query('INSERT INTO member (id,"organizationId","userId",role,"createdAt") VALUES ($1,$2,$3,$4,now())',['m-carol',org.id,carol.id,'member'])
+  const mint=async(u:{cookie:string})=>(await request('/api/gateway/token',u.cookie,{organizationId:org.id,deviceId:'d1'})).status
+  assert.equal(await mint(carol),200)
+  // self-revoke, self un-revoke refused, then admin restores
+  assert.equal((await request('/api/gateway/revoke',carol.cookie)).status,200)
+  assert.equal(await mint(carol),403)
+  assert.equal((await request('/api/gateway/unrevoke',carol.cookie,{userId:carol.id})).status,403)
+  assert.equal(await isRevoked(gwDb,carol.id),true)
+  // non-admin and unrelated-org admin cannot act; same 403 for unknown targets
+  assert.equal((await request('/api/gateway/unrevoke',bob.cookie,{userId:carol.id})).status,403)
+  assert.equal((await request('/api/gateway/revoke',bob.cookie,{userId:carol.id})).status,403)
+  assert.equal((await request('/api/gateway/revoke',carol.cookie,{userId:alice.id})).status,403)
+  assert.equal((await request('/api/gateway/unrevoke',carol.cookie,{userId:alice.id})).status,403)
+  assert.equal((await request('/api/gateway/revoke',bob.cookie,{userId:'nobody'})).status,403)
+  assert.equal((await request('/api/gateway/unrevoke',alice.cookie,{userId:'nobody'})).status,403)
+  assert.equal((await request('/api/gateway/unrevoke','',{userId:carol.id})).status,401)
+  assert.equal(await isRevoked(gwDb,alice.id),true)
+  assert.equal((await request('/api/gateway/unrevoke',alice.cookie,{userId:carol.id})).status,200)
+  assert.equal(await mint(carol),200)
+  // admin cannot un-revoke self (alice is still revoked from above)
+  assert.equal((await request('/api/gateway/unrevoke',alice.cookie,{userId:alice.id})).status,403)
+  assert.equal(await isRevoked(gwDb,alice.id),true)
+  // admin revoke of a member blocks that member's next token
+  assert.equal((await request('/api/gateway/unrevoke',alice.cookie,{userId:carol.id})).status,200)
+  assert.equal((await request('/api/gateway/revoke',alice.cookie,{userId:carol.id})).status,200)
+  assert.equal(await mint(carol),403)
  }finally{await server.close()}
 })
