@@ -13,6 +13,7 @@ import type { ApprovalRequest, Risk } from '../src/permissions.js'
 import type { ModelConfig } from '../src/providers/registry.js'
 import type { ModelProvider } from '../src/providers/types.js'
 import { builtinTools } from '../src/tools/index.js'
+import { scrubEnv } from '../src/tools/shell.js'
 import type { Tool } from '../src/tools/types.js'
 
 /** The system prompt as it was before issue #19. Kept only as the comparison baseline. */
@@ -60,11 +61,10 @@ const toolCount = (run: RunRecord, name: string) => run.toolCalls.filter(n => n 
 const approvedOnly = (risks: Risk[]) => (req: ApprovalRequest) => risks.includes(req.risk)
 const listing = (cwd: string, rel: string) => fs.readdir(path.join(cwd, rel)).catch(() => [] as string[])
 /** Runs a node:test file in the fixture. NODE_TEST_CONTEXT would change the child's exit status under node --test. */
-const testPasses = (cwd: string, file: string) => {
-  const env = { ...process.env }
-  delete env.NODE_TEST_CONTEXT
-  return spawnSync(process.execPath, ['--test', file], { cwd, env, encoding: 'utf8' }).status === 0
-}
+/** The fixture's code was written by the model under test, so the child never gets our credentials (scrubEnv) and cannot hang the run. */
+const childEnv = () => { const env = scrubEnv(process.env); delete env.NODE_TEST_CONTEXT; return env }
+const testPasses = (cwd: string, file: string) =>
+  spawnSync(process.execPath, ['--test', file], { cwd, env: childEnv(), encoding: 'utf8', timeout: 60_000 }).status === 0
 const testHeader = "import { test } from 'node:test'\nimport assert from 'node:assert/strict'\n"
 const WRITE_TOOLS = ['write_file', 'edit_file', 'apply_file_change']
 const READ_TOOLS = ['read_file', 'search_text', 'grep', 'glob', 'list_dir', 'file_snapshot']
@@ -92,9 +92,7 @@ export const TASKS: EvalTask[] = [
     approve: approvedOnly(['write', 'exec']),
     async check(cwd) {
       // NODE_TEST_CONTEXT is set when this harness runs under node --test; it would change the child's exit status.
-      const env = { ...process.env }
-      delete env.NODE_TEST_CONTEXT
-      const proc = spawnSync(process.execPath, ['--test', 'add.test.mjs'], { cwd, env, encoding: 'utf8' })
+      const proc = spawnSync(process.execPath, ['--test', 'add.test.mjs'], { cwd, env: childEnv(), encoding: 'utf8', timeout: 60_000 })
       const ok = proc.status === 0
       return { ok, detail: ok ? 'add.test.mjs passes' : `add.test.mjs exit ${proc.status}` }
     },

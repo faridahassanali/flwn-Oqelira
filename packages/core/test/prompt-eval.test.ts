@@ -243,8 +243,8 @@ test('failing-test check accepts a fixed add() and rejects the buggy one', async
 
 test('results table lists every model and prompt, pass totals, and failure details', () => {
   const runs: EvalRun[] = [
-    { model: 'alpha', prompt: 'baseline', task: 't1', ok: true, detail: '', steps: 1 },
-    { model: 'alpha', prompt: 'current', task: 't1', ok: false, detail: 'wrong value', steps: 2 },
+    { model: 'alpha', prompt: 'baseline', task: 't1', rep: 0, ok: true, detail: '', steps: 1 },
+    { model: 'alpha', prompt: 'current', task: 't1', rep: 0, ok: false, detail: 'wrong value', steps: 2 },
   ]
   const md = renderResults(runs, { date: '2026-11-09', mode: 'test' })
   assert.match(md, /\| Task \| alpha \/ baseline \| alpha \/ current \|/)
