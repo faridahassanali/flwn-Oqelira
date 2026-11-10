@@ -74,3 +74,8 @@ export async function isRevoked(db: Db, userId: string): Promise<boolean> {
 export async function revokeUser(db: Db, userId: string, now = new Date()): Promise<void> {
   await db.query('INSERT INTO gw_revocations (user_id, revoked_at) VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING', [userId, now])
 }
+
+/** Restores token minting. Callers must not let a user undo their own revocation. */
+export async function unrevokeUser(db: Db, userId: string): Promise<void> {
+  await db.query('DELETE FROM gw_revocations WHERE user_id = $1', [userId])
+}
