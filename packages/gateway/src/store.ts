@@ -92,6 +92,12 @@ export async function isBlocked(db: Db, userId: string, orgId: string): Promise<
   return rows.length > 0
 }
 
+/** Epoch ms before which a user's sessions may no longer mint tokens (their last self revoke), or 0. */
+export async function revokedBefore(db: Db, userId: string): Promise<number> {
+  const { rows } = await db.query("SELECT valid_after FROM gw_revocations WHERE user_id = $1 AND org_id = ''", [userId])
+  return rows.length ? Number(rows[0]?.valid_after) : 0
+}
+
 /** Self revoke: voids every token issued so far. Keeps an existing block (it is not the user's to lift). */
 export async function revokeUser(db: Db, userId: string, now = new Date()): Promise<void> {
   await db.query(

@@ -48,7 +48,10 @@ test('gateway token issuer: sign-in, own orgs only, revocation',{timeout:90000},
   const old=await mint(alice,org.id);await wait()
   assert.equal((await request('/api/gateway/revoke',alice.cookie)).status,200)
   assert.equal(await dead(old,alice,org.id),true);await wait()
-  const fresh=await mint(alice,org.id);assert.equal(await dead(fresh,alice,org.id),false)
+  assert.equal(await mint(alice,org.id),403,'a session that predates the revoke cannot mint again')
+  const relog=await request('/api/auth/sign-in/email','',{email:'alice@example.test',password:'Controlled test password 2026!'});assert.equal(relog.status,200)
+  const aliceNew={id:alice.id,cookie:relog.headers.getSetCookie().map(value=>value.split(';')[0]).join('; ')}
+  const fresh=await mint(aliceNew,org.id);assert.equal(await dead(fresh,alice,org.id),false)
   // admin block is scoped to one org
   const carol=await signup('carol@example.test')
   await pool.query('INSERT INTO member (id,"organizationId","userId",role,"createdAt") VALUES ($1,$2,$3,$4,now())',['m-carol',org.id,carol.id,'member'])
