@@ -2,6 +2,7 @@ import dns from 'node:dns/promises'
 import fs from 'node:fs/promises'
 import net from 'node:net'
 import path from 'node:path'
+import { Agent, fetch } from 'undici'
 import { resolveInside } from './fs.js'
 import { str, truncate } from './types.js'
 import type { Tool } from './types.js'
@@ -93,25 +94,40 @@ function assertPublicUrl(value: string): URL {
   return url
 }
 
-export const webFetch: Tool = {
-  spec: { name: 'web_fetch', description: 'Fetch a public URL supplied by the user or a web search result. Redirects to private/local addresses are blocked and response size is limited.', parameters: { type: 'object', properties: { url: { type: 'string' }, max_chars: { type: 'integer' } }, required: ['url'] } },
-  risk: 'network', describe: (i) => `fetch ${str(i, 'url')}`,
-  async run(input, ctx) {
-    let url = assertPublicUrl(str(input, 'url')); const max = Math.min(100_000, Math.max(1_000, Number((input as any)?.max_chars ?? 30_000)))
-    for (let redirects = 0; redirects <= 3; redirects++) {
-      // Every resolved address must be public, and a failed lookup is a refusal. ponytail: fetch resolves again, so DNS rebinding between check and connect is not closed; pin the IP through an undici dispatcher if this tool is ever exposed to untrusted callers.
-      const addresses = await dns.lookup(bareHost(url), { all: true }).catch(() => [])
-      if (!addresses.length || addresses.some((a) => isNonPublic(a.address))) throw new Error('Private and local addresses are not allowed')
-      const response = await fetch(url, { redirect: 'manual', signal: AbortSignal.any([...(ctx.signal ? [ctx.signal] : []), AbortSignal.timeout(20_000)]) })
-      if ([301, 302, 303, 307, 308].includes(response.status)) { const location = response.headers.get('location'); if (!location) throw new Error('Redirect has no location'); url = assertPublicUrl(new URL(location, url).toString()); continue }
-      if (!response.ok) throw new Error(`web_fetch failed (HTTP ${response.status})`)
-      const reader = response.body?.getReader(); if (!reader) return ''
-      const chunks: Uint8Array[] = []; let size = 0
-      while (size < max) { const next = await reader.read(); if (next.done) break; const chunk = next.value.subarray(0, Math.min(next.value.length, max - size)); chunks.push(chunk); size += chunk.length; if (chunk.length < next.value.length) break }
-      return truncate(new TextDecoder().decode(Buffer.concat(chunks)), max)
-    }
-    throw new Error('Too many redirects')
-  },
+export type Resolve = (host: string) => Promise<{ address: string; family: number }[]>
+const systemResolve: Resolve = (host) => dns.lookup(host, { all: true })
+
+/** An agent whose sockets can only go to `address`; TLS server name and Host still come from the URL's hostname. */
+export const pinnedAgent = (address: string) => new Agent({
+  connect: { lookup: ((_host: string, opts: { all?: boolean }, cb: (...args: unknown[]) => void) => opts?.all ? cb(null, [{ address, family: net.isIPv6(address) ? 6 : 4 }]) : cb(null, address, net.isIPv6(address) ? 6 : 4)) as never },
+})
+
+/** `resolve` is a test seam, not part of the tool's input schema. */
+export function createWebFetch(resolve: Resolve = systemResolve): Tool {
+  return {
+    spec: { name: 'web_fetch', description: 'Fetch a public URL supplied by the user or a web search result. Redirects to private/local addresses are blocked and response size is limited.', parameters: { type: 'object', properties: { url: { type: 'string' }, max_chars: { type: 'integer' } }, required: ['url'] } },
+    risk: 'network', describe: (i) => `fetch ${str(i, 'url')}`,
+    async run(input, ctx) {
+      let url = assertPublicUrl(str(input, 'url')); const max = Math.min(100_000, Math.max(1_000, Number((input as any)?.max_chars ?? 30_000)))
+      for (let redirects = 0; redirects <= 3; redirects++) {
+        // Resolve once per hop, require every address to be public (a failed lookup is a refusal), then connect only to the first validated address so a second DNS answer cannot steer the socket.
+        const addresses = await resolve(bareHost(url)).catch(() => [])
+        if (!addresses.length || addresses.some((a) => isNonPublic(a.address))) throw new Error('Private and local addresses are not allowed')
+        const dispatcher = pinnedAgent(addresses[0]!.address)
+        try {
+          const response = await fetch(url, { redirect: 'manual', dispatcher, signal: AbortSignal.any([...(ctx.signal ? [ctx.signal] : []), AbortSignal.timeout(20_000)]) })
+          if ([301, 302, 303, 307, 308].includes(response.status)) { const location = response.headers.get('location'); if (!location) throw new Error('Redirect has no location'); url = assertPublicUrl(new URL(location, url).toString()); continue }
+          if (!response.ok) throw new Error(`web_fetch failed (HTTP ${response.status})`)
+          const reader = response.body?.getReader(); if (!reader) return ''
+          const chunks: Uint8Array[] = []; let size = 0
+          while (size < max) { const next = await reader.read(); if (next.done) break; const chunk = next.value.subarray(0, Math.min(next.value.length, max - size)); chunks.push(chunk); size += chunk.length; if (chunk.length < next.value.length) break }
+          return truncate(new TextDecoder().decode(Buffer.concat(chunks)), max)
+        } finally { dispatcher.destroy().catch(() => {}) }
+      }
+      throw new Error('Too many redirects')
+    },
+  }
 }
+export const webFetch = createWebFetch()
 
 export function taskList(cwd: string) { return tasks.get(cwd) ?? [] }
