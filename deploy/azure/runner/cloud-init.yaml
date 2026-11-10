@@ -106,6 +106,7 @@ write_files:
       install -m 0644 /etc/oqelira/oqelira.nft /etc/nftables.conf
       systemctl daemon-reload
       systemctl enable --now nftables oqelira-quota.timer oqelira-backup.timer
+      systemctl enable oqelira-quota-watch.service && systemctl start oqelira-quota-watch.service
       systemctl enable --now caddy && systemctl reload caddy || true
       # The runner is NOT started here: no worker image or code exists yet. oqelira-install.sh starts it.
       touch /var/lib/oqelira/.firstboot-done
@@ -145,10 +146,12 @@ write_files:
     content: |
       #!/usr/bin/env bash
       # Applies an XFS project quota to every oq-project-* Docker volume. UNTESTED.
-      # KNOWN LIMIT: runs every 30 s (timer), so a new volume is unbounded for up to ~30-60 s after creation
-      # (first worker run). A hostile project can write at disk speed in that gap. Accepted for now; the
-      # fix is a quota-aware volume creation step in the runner (create volume, set quota, then run).
+      # Runs from oqelira-quota-watch.service on every Docker volume-create event (so the quota lands in
+      # about 0.3 s as measured, before any usage) and from the 30 s timer as a fallback (missed events, restarts).
+      # Measured on the real VM before the watcher: gap 12-25 s, 4 parallel writers put 4 GiB into a 2 GiB project.
+      # flock: the watcher and the timer can overlap; /etc/projid must not be edited concurrently.
       set -euo pipefail
+      exec 9>/run/oqelira-quota.lock; flock 9
       . /etc/oqelira/quota.env
       ROOT=/var/lib/oqelira
       VOL=$ROOT/docker/volumes
@@ -318,6 +321,21 @@ write_files:
       [Service]
       Type=oneshot
       ExecStart=/usr/local/sbin/oqelira-quota.sh
+
+  - path: /etc/systemd/system/oqelira-quota-watch.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Apply project quota as soon as a project volume is created
+      After=docker.service
+      Requires=docker.service
+      RequiresMountsFor=/var/lib/oqelira
+      [Service]
+      ExecStart=/bin/bash -c "docker events --filter type=volume --filter event=create --format '{{.Actor.ID}}' | while read -r _; do /usr/local/sbin/oqelira-quota.sh; done"
+      Restart=always
+      RestartSec=2
+      [Install]
+      WantedBy=multi-user.target
 
   - path: /etc/systemd/system/oqelira-quota.timer
     permissions: '0644'
