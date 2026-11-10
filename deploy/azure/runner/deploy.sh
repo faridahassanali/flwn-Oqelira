@@ -18,7 +18,7 @@ az deployment group create  -g \$RG --subscription "\$SUB" -f deploy/azure/runne
   -p sshPublicKey="\$PUBKEY" adminIp=\$ADMIN_IP dnsLabel=\$LABEL
 
 # 2. Wait for first boot (a few minutes), then copy the code and install:
-HOST=\$LABEL.francecentral.cloudapp.azure.com
+HOST=\$LABEL.swedencentral.cloudapp.azure.com
 ssh oqadmin@\$HOST 'cloud-init status --wait && test -f /var/lib/oqelira/.firstboot-done'
 scp $OUT oqadmin@\$HOST:/tmp/oqelira-code.tgz
 ssh oqadmin@\$HOST 'sudo /usr/local/sbin/oqelira-install.sh /tmp/oqelira-code.tgz'   # prints the pinned worker image
