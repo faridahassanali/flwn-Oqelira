@@ -15,6 +15,9 @@ param vmSize string = 'Standard_B2ls_v2'
 param dataDiskSizeGB int = 64
 @description('Per-project XFS quota in GiB.')
 param projectQuotaGiB int = 2
+// Hard inode limit per project volume. 1,000,000 covers a large node_modules tree (typically 50k-300k files) several times over;
+// the validation run showed 300k empty files cost 157 MiB of real metadata disk, so 1M bounds that at roughly 0.5 GiB per project.
+param projectInodeLimit int = 1000000
 @description('Off by default: the API needs the runner reachable.')
 param enableAutoShutdown bool = false
 param autoShutdownTime string = '2100'
@@ -22,7 +25,7 @@ param autoShutdownTimeZone string = 'UTC'
 param storageAccountName string = 'oqrun${uniqueString(resourceGroup().id)}'
 param backupRetentionDays int = 30
 
-var cloudInit = replace(replace(replace(loadTextContent('cloud-init.yaml'), '__FQDN__', '${dnsLabel}.${location}.cloudapp.azure.com'), '__QUOTA_GIB__', string(projectQuotaGiB)), '__STORAGE_ACCOUNT__', storageAccountName)
+var cloudInit = replace(replace(replace(replace(loadTextContent('cloud-init.yaml'), '__FQDN__', '${dnsLabel}.${location}.cloudapp.azure.com'), '__QUOTA_GIB__', string(projectQuotaGiB)), '__INODE_LIMIT__', string(projectInodeLimit)), '__STORAGE_ACCOUNT__', storageAccountName)
 var blobContributorRole = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe' // Storage Blob Data Contributor
 
 resource ip 'Microsoft.Network/publicIPAddresses@2024-05-01' = {
