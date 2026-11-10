@@ -42,6 +42,7 @@ export type EngineRequest =
   | { type: 'end'; sessionId?: string }
   | { type: 'memory'; action: 'list' | 'forget' | 'approve'; id?: string }
   | { type: 'history'; sessionId?: string }
+  | { type: 'custom-commands' }
   | { type: 'git-history'; limit?: number }
   | { type: 'git-diff'; commit: string }
   | { type: 'session-files'; sessionId?: string }
@@ -50,6 +51,7 @@ export type EngineMessage =
   | { type: 'cleared' }
   | { type: 'sessions'; sessions: { id: string; title: string; model: string; createdAt: string; updatedAt: string; messages: number }[] }
   | { type: 'history'; sessionId: string; messages: unknown[] }
+  | { type: 'custom-commands'; commands: { name: string; description: string }[] }
   | { type: 'git-history'; commits: { hash: string; shortHash: string; author: string; date: string; subject: string }[] }
   | { type: 'git-diff'; diff: { hash: string; patch: string; files: string[] } }
   | { type: 'session-files'; sessionId: string; files: string[] }

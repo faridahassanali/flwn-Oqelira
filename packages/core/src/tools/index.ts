@@ -7,6 +7,7 @@ import { glob, grep, todoWrite, webFetch } from './pack.js'
 
 export const builtinTools: Tool[] = [readFile, listDir, searchText, glob, grep, todoWrite, webFetch, ...changeTools, writeFile, editFile, runCommand]
 export type { Tool, ToolContext } from './types.js'
+export { runCommand } from './shell.js'
 export { glob, grep, todoWrite, webFetch, taskList } from './pack.js'
 export { webSearch, webTools } from './web.js'
 export { memoryTools } from './memory.js'

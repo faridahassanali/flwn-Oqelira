@@ -32,6 +32,32 @@ test('checkpoint captures interrupted tool intent and cancellation after approva
     await assert.rejects(fs.access(path.join(cwd, 'must-not-exist.txt')))
   })
 })
+
+test('a failing before-tool hook blocks the tool before it runs', async () => {
+  let ran = false
+  const result = await runAgent({
+    cwd: process.cwd(), prompt: 'fixture', maxSteps: 1,
+    tools: [{ spec: { name: 'read_fixture', description: 'fixture', parameters: {} }, risk: 'read', describe: () => 'read fixture', run: async () => { ran = true; return 'read' } }],
+    beforeTool: async () => { throw new Error('hook rejected the call') },
+    provider: { id: 'fixture', async *stream() { yield { type: 'tool-call', call: { id: 'hook', name: 'read_fixture', input: {} } }; yield { type: 'finish', reason: 'tool-calls' } } },
+  })
+  assert.equal(ran, false)
+  const last = result.messages.at(-1)
+  assert.equal(last?.role, 'tool')
+  if (last?.role === 'tool') assert.match(last.results[0]?.output ?? '', /hook rejected/)
+})
+
+test('a failing after-tool hook marks the result as failed instead of hiding it', async () => {
+  const result = await runAgent({
+    cwd: process.cwd(), prompt: 'fixture', maxSteps: 1,
+    tools: [{ spec: { name: 'read_fixture', description: 'fixture', parameters: {} }, risk: 'read', describe: () => 'read fixture', run: async () => 'read' }],
+    afterTool: async () => { throw new Error('after hook failed') },
+    provider: { id: 'fixture', async *stream() { yield { type: 'tool-call', call: { id: 'after', name: 'read_fixture', input: {} } }; yield { type: 'finish', reason: 'tool-calls' } } },
+  })
+  const last = result.messages.at(-1)
+  assert.equal(last?.role, 'tool')
+  if (last?.role === 'tool') { assert.equal(last.results[0]?.isError, true); assert.match(last.results[0]?.output ?? '', /after hook failed/) }
+})
 const model: ModelConfig = { id: 'm', deployment: 'm-deployment', api: 'chat', speed: 'fast' }
 
 const nativeRealpath = (p: string) =>

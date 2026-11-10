@@ -91,6 +91,9 @@ export async function serve(engine: Engine, { input = process.stdin, output = pr
       case 'history':
         send({ type: 'history', sessionId: req.sessionId ?? DEFAULT_SESSION, messages: await engine.history(req.sessionId) })
         return
+      case 'custom-commands':
+        send({ type: 'custom-commands', commands: engine.customCommands().map(({ name, description }) => ({ name, description })) })
+        return
       case 'git-history':
         send({ type: 'git-history', commits: await engine.gitHistory(req.limit) })
         return

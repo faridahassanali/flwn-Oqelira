@@ -222,6 +222,20 @@ test('interactive session: keeps history between turns, /clear forgets it, /exit
   })
 })
 
+test('interactive session: a trusted custom slash command expands its prompt', async () => {
+  await workspace(async (cwd) => {
+    await fs.mkdir(`${cwd}-home`, { recursive: true })
+    await fs.writeFile(path.join(`${cwd}-home`, 'customizations.json'), JSON.stringify({ commands: [{ name: 'review', description: 'Review files', prompt: 'Review {{args}} carefully.' }] }))
+    const mock = await startMock({ script: (body) => ({ text: body.messages.at(-1)?.content ?? '' }) })
+    try {
+      const r = await runCli(M, { cwd, baseURL: mock.baseURL, stdin: '/commands\n/review src/a.ts\n/exit\n' })
+      assert.equal(r.code, 0, r.stdout + r.stderr)
+      assert.match(r.stdout, /\/review\s+Review files/)
+      assert.match(r.stdout, /Review src\/a\.ts carefully\./)
+    } finally { await mock.close() }
+  })
+})
+
 test('interactive session restores local history and /clear removes it', async () => {
   await workspace(async (cwd) => {
     const mock = await startMock({ script: (_b, n) => ({ text: `answer ${n}` }) })

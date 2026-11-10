@@ -27,6 +27,9 @@ export interface AgentOptions {
   onText?: (delta: string) => void
   onToolCall?: (call: ToolCall) => void
   onToolResult?: (result: ToolResult) => void
+  /** Engine lifecycle hooks run immediately around an allowed tool execution. */
+  beforeTool?: (call: ToolCall, tool: Tool) => Promise<void>
+  afterTool?: (call: ToolCall, tool: Tool, result: ToolResult) => Promise<void>
   /** Called immediately before a model request. Throw to stop before spending more tokens. */
   beforeModelStep?: () => Promise<void> | void
   /** Reports provider token usage after a completed model request. */
@@ -96,7 +99,8 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
     const results: ToolResult[] = []
     messages.push({ role: 'tool', results })
     const readCalls = calls.filter((call) => toolMap.get(call.name)?.risk === 'read')
-    const ready = new Map<string, ToolResult>(await Promise.all(readCalls.map(async (call) => [call.id, await executeTool(call, toolMap, permissions, opts)] as const)))
+    // A hook can depend on tool order, so parallel reads are allowed only without lifecycle hooks.
+    const ready = new Map<string, ToolResult>(!opts.beforeTool && !opts.afterTool ? await Promise.all(readCalls.map(async (call) => [call.id, await executeTool(call, toolMap, permissions, opts)] as const)) : [])
     for (const call of calls) {
       const result = ready.get(call.id) ?? await executeTool(call, toolMap, permissions, opts)
       opts.onToolResult?.(result); results.push(result); await opts.onCheckpoint?.(messages)
@@ -125,8 +129,13 @@ async function executeTool(
     })
     if (!verdict.allowed) return fail(`not allowed: ${verdict.reason ?? 'denied'}`)
     opts.signal?.throwIfAborted()
+    await opts.beforeTool?.(call, tool)
     const output = await tool.run(call.input, { cwd: opts.cwd, signal: opts.signal })
-    return { id: call.id, name: call.name, output: truncate(output) }
+    const result = { id: call.id, name: call.name, output: truncate(output) }
+    try { await opts.afterTool?.(call, tool, result) } catch (e) {
+      return { ...result, output: `${result.output}\nHook failed after ${call.name}: ${e instanceof Error ? e.message : String(e)}`, isError: true }
+    }
+    return result
   } catch (e) {
     return fail(e instanceof Error ? e.message : String(e))
   }

@@ -36,7 +36,7 @@ In the session:  /model <id>   /resume [id]   /git [commit|files]   /clear   /he
 Project rules are read from OQELIRA.md (or AGENTS.md) in the project directory.
 `
 
-const SESSION_HELP = '/model <id>  switch model   /resume [id]  list or resume a session   /git [commit|files]  inspect read-only Git history   /memory  list project memory   /steps  expand completed steps   /step <n>  expand one step   /clear  forget current session   /exit  quit   Ctrl+C  interrupt'
+const SESSION_HELP = '/model <id>  switch model   /resume [id]  list or resume a session   /git [commit|files]  inspect read-only Git history   /commands  list custom commands   /memory  list project memory   /steps  expand completed steps   /step <n>  expand one step   /clear  forget current session   /exit  quit   Ctrl+C  interrupt'
 
 function oneLine(text: string, max = 110): string {
   const first = text.split(/\r?\n/).find((l) => l.trim()) ?? ''
@@ -158,6 +158,7 @@ async function main(): Promise<number> {
     `${bold('/model <id>')}  switch model`,
     `${bold('/resume [id]')}  list or resume a saved session`,
     `${bold('/git [commit|files]')}  inspect commits, a diff, or files touched in this session`,
+    `${bold('/commands')}  list trusted custom commands`,
     `${bold('/memory [approve|forget]')}  review project memory`,
     `${bold('/steps')} / ${bold('/step <n>')}  review completed tool steps`,
     `${bold('/clear')}  clear the current session`,
@@ -318,6 +319,11 @@ async function main(): Promise<number> {
       }
       continue
     }
+    if (text === '/commands') {
+      const commands = engine.customCommands()
+      out(commands.length ? commands.map((command) => `${bold(`/${command.name}`)}  ${plainText(command.description)}`).join('\n') + '\n' : `${dim('no trusted custom commands configured')}\n`)
+      continue
+    }
     if (text === '/steps') {
       const all = steps.all()
       out(all.length ? all.map(step => `${dim(`[${step.index}]`)} ${plainText(stepSummary(step))}`).join('\n') + '\n' : `${dim('no completed steps yet')}\n`)
@@ -369,7 +375,12 @@ async function main(): Promise<number> {
       continue
     }
     if (text.startsWith('/')) {
-      out(`${dim(`unknown command. ${SESSION_HELP}`)}\n`)
+      const [name, ...args] = text.slice(1).split(/\s+/)
+      const prompt = name ? engine.expandCustomCommand(name, args.join(' ')) : undefined
+      if (prompt) {
+        out(`${dim(`custom command: /${name}`)}\n`)
+        await runTurn(prompt)
+      } else out(`${dim(`unknown command. ${SESSION_HELP}`)}\n`)
       continue
     }
     await runTurn(text)

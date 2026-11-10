@@ -15,8 +15,10 @@ import {
   openLocalMemory,
   recallBlock,
   runAgent,
+  runCommand,
   webTools,
 } from '@oqelira/core'
+import { checkPermission } from '@oqelira/core'
 import type { ApprovalRequest, Approver, ContextGateway, MemoryEntry, Message, ModelConfig, Permissions, Risk, Tool } from '@oqelira/core'
 import type { HostEvent } from '@oqelira/protocol'
 import { createCompactor } from './compaction.js'
@@ -29,6 +31,8 @@ import type { UsageSnapshot } from './usage.js'
 import { hardDenyReason } from './classifier.js'
 import { gitDiff, gitHistory, sessionFiles } from './git.js'
 import type { GitCommitDiff, GitCommitSummary } from './git.js'
+import { openCustomizations } from './customizations.js'
+import type { CustomCommand, HookEvent } from './customizations.js'
 
 export interface EngineOptions {
   cwd: string
@@ -70,6 +74,8 @@ export interface Engine {
   gitHistory(limit?: number): Promise<GitCommitSummary[]>
   gitDiff(commit: string): Promise<GitCommitDiff>
   sessionFiles(sessionId?: string): Promise<string[]>
+  customCommands(): readonly CustomCommand[]
+  expandCustomCommand(name: string, args: string): string | undefined
   setModel(id: string): ModelConfig
   /** Summary line the interfaces show for a tool call. */
   describe(name: string, input: unknown): string
@@ -135,6 +141,7 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
   const tools: Tool[] = [...builtinTools, ...webTools(), ...(memory ? memoryTools(memory) : [])]
   const autoAllow: Risk[] = ['read', ...(opts.yes || opts.yolo ? (['write'] as Risk[]) : []), ...(opts.yolo ? (['exec', 'network'] as Risk[]) : [])]
   const rules = openRules(cwd, stateRoot)
+  const customizations = openCustomizations(cwd, stateRoot)
   const decide: Permissions['decide'] = async (req) => {
     if (rules.allows(req)) return 'allow'
     const custom = await opts.decide?.(req)
@@ -181,6 +188,16 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
   const contextChars = opts.contextChars ?? 80_000
   const maxContinues = opts.maxContinues ?? 3
   const usage = new UsageTracker(store, usageLimits)
+  const runHooks = async (event: HookEvent, toolName: string | undefined, io: { signal?: AbortSignal; approve?: Approver; onEvent?: (event: HostEvent) => void }) => {
+    for (const hook of customizations.hooksFor(event, toolName)) {
+      const request: ApprovalRequest = { tool: 'run_hook', risk: 'exec', summary: `hook ${hook.id} (${event}): ${hook.command}`, input: { id: hook.id, event, command: hook.command, tool: toolName } }
+      const verdict = await checkPermission({ autoAllow, alwaysAsk: hardDenyReason, decide, approve: io.approve }, request)
+      if (!verdict.allowed) throw new Error(`Hook ${hook.id} was not allowed: ${verdict.reason ?? 'denied'}`)
+      io.onEvent?.({ type: 'notice', message: `Running hook ${hook.id} (${event}).` })
+      const output = await runCommand.run({ command: hook.command, ...(hook.timeoutSeconds ? { timeout_seconds: hook.timeoutSeconds } : {}) }, { cwd, signal: io.signal })
+      if (!/\[exit code 0\]$/.test(output)) throw new Error(`Hook ${hook.id} failed: ${output}`)
+    }
+  }
 
   return {
     cwd,
@@ -194,6 +211,8 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
     gitHistory: (limit) => gitHistory(cwd, limit),
     gitDiff: (commit) => gitDiff(cwd, commit),
     sessionFiles: async (id = DEFAULT_SESSION) => sessionFiles(stateOf(id).messages),
+    customCommands: () => customizations.commands(),
+    expandCustomCommand: (name, args) => customizations.expand(name, args),
     setModel(id) {
       model = findModel(id, models)
       return model
@@ -215,6 +234,7 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
     forgetMemory: async (id) => (memory ? memory.forget(id) : false),
     approveMemory: async (id) => (memory ? memory.approve(id) : false),
     async endSession(id = DEFAULT_SESSION, io = {}) {
+      await runHooks('session_end', undefined, io)
       if (!memory || opts.autoMemory === false) return []
       const st = stateOf(id)
       const from = Math.min(store.getMemorized(id), st.messages.length)
@@ -248,18 +268,22 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
       store.remove(id)
     },
     async run(prompt, io) {
+      const slash = /^\/([a-z][a-z0-9-]*)(?:\s+([\s\S]*))?$/.exec(prompt.trim())
+      const expanded = slash ? customizations.expand(slash[1]!, slash[2] ?? '') : undefined
+      const effectivePrompt = expanded ?? prompt
       const id = io.sessionId ?? DEFAULT_SESSION
       const st = stateOf(id)
       for (const message of startupNotices.splice(0)) io.onEvent({ type: 'notice', message })
       let recalled = ''
       if (memory) {
         try {
-          recalled = await recallBlock(memory, prompt, io.signal)
+          recalled = await recallBlock(memory, effectivePrompt, io.signal)
         } catch (e) {
           io.onEvent({ type: 'notice', message: `Memory recall skipped: ${(e as Error).message}` })
         }
       }
       const provider = makeProvider(model)
+      const toolHooks = customizations.hasToolHooks()
       const compact = createCompactor({
         provider,
         budget: contextChars,
@@ -268,7 +292,8 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
         notice: (message) => io.onEvent({ type: 'notice', message }),
       })
       try {
-        let next = prompt
+        await runHooks('session_start', undefined, io)
+        let next = effectivePrompt
         const warned = new Set<string>()
         const emitUsageWarnings = () => {
           for (const warning of usage.warnings()) {
@@ -303,6 +328,7 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
             onContextCompacted: (info) => io.onEvent({ type: 'context-compacted', ...info }),
             onToolCall: (call) => io.onEvent({ type: 'tool-call', id: call.id, name: call.name, input: call.input }),
             onToolResult: (r) => io.onEvent({ type: 'tool-result', id: r.id, name: r.name, output: r.output, isError: r.isError }),
+            ...(toolHooks ? { beforeTool: (call: { name: string }) => runHooks('before_tool', call.name, io), afterTool: (call: { name: string }) => runHooks('after_tool', call.name, io) } : {}),
           })
           st.messages = result.messages
           persist(id, st)
