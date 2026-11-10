@@ -6,7 +6,7 @@ import type { ModelConfig, ModelEvent, ModelRequest, ModelProvider, ToolSpec } f
 import type { GatewayConfig } from '../src/config.js'
 import { createGatewayServer } from '../src/server.js'
 import { issueToken } from '../src/tokens.js'
-import { migrate, revokeUser } from '../src/store.js'
+import { migrate, revokeUser, blockUser, unblockUser } from '../src/store.js'
 import type { Db } from '../src/store.js'
 
 const KEY = Buffer.from('test-token-key-that-is-long-enough-0123456789')
@@ -231,6 +231,36 @@ test('revocation stops a user on their next request; forged and expired tokens a
   } finally {
     await h.close()
   }
+})
+
+test('block is scoped to one org; unblock keeps valid_after; self revoke only voids older tokens; legacy table migrates to global blocks', async () => {
+  const h = await harness()
+  try {
+    const inA = h.token('alice', 'laptop', 'orgA'), inB = h.token('alice', 'laptop', 'orgB')
+    h.tick(1000)
+    await blockUser(h.db, 'alice', 'orgA', new Date(h.now()))
+    assert.equal((await h.post(chat('a'), inA)).status, 401)
+    assert.equal((await h.post(chat('b'), inB)).status, 200, 'other org unaffected')
+    h.tick(1000)
+    await unblockUser(h.db, 'alice', 'orgA')
+    assert.equal((await h.post(chat('old'), inA)).status, 401, 'pre-block token does not come back')
+    assert.equal((await h.post(chat('new'), h.token('alice', 'laptop', 'orgA'))).status, 200)
+    h.tick(1000)
+    await revokeUser(h.db, 'alice', new Date(h.now()))
+    assert.equal((await h.post(chat('b2'), inB)).status, 401)
+    h.tick(1)
+    assert.equal((await h.post(chat('fresh'), h.token('alice', 'laptop', 'orgB'))).status, 200)
+  } finally {
+    await h.close()
+  }
+
+  const pg = new PGlite()
+  const db: Db = { query: async (sql, params) => ({ rows: (await pg.query(sql, params as unknown[])).rows as Record<string, unknown>[] }) }
+  await pg.query('CREATE TABLE gw_revocations (user_id text PRIMARY KEY, revoked_at timestamptz NOT NULL)')
+  await pg.query("INSERT INTO gw_revocations VALUES ('old', '2026-11-09T12:00:00Z')")
+  await migrate(db); await migrate(db)
+  const { rows } = await pg.query('SELECT user_id, org_id, valid_after, blocked FROM gw_revocations')
+  assert.deepEqual(rows, [{ user_id: 'old', org_id: '', valid_after: START, blocked: true }])
 })
 
 test('schema checks use own keys only: inherited names like constructor or toString cannot pass or satisfy required', async () => {
