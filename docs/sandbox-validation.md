@@ -14,7 +14,12 @@ The worker was then run with the same controls constructed by
 
 - `--runtime=runsc`, `--network=none`, a read-only root filesystem, no Linux
   capabilities, and `no-new-privileges`.
-- UID/GID 1000, a 64-process limit, one CPU, and 512 MB memory.
+- UID/GID 1000, a 64-process limit, one CPU, and 1 GiB memory (default; runner-only
+  `OQELIRA_WORKER_MEMORY`). gVisor counts file cache as container memory: on the
+  3.9 GiB runner VM a buffered 1.9 GiB write was OOM-killed at 512m and passed at
+  768m, while `npm ci`, a vite build and an 854 MiB clone passed at 512m. The
+  runner admits at most 3 concurrent jobs (`OQELIRA_RUNNER_MAX_JOBS`) and refuses
+  to start if memory x jobs exceeds `OQELIRA_RUNNER_MEMORY_BUDGET` (default 3g).
 - A 64 MB `noexec` tmpfs at `/tmp`, plus a per-project named volume at
   `/workspace`.
 

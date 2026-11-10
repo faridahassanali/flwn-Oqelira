@@ -88,7 +88,12 @@ before exposing public registration or untrusted workloads.
 Runner-specific configuration: `NODE_ENV=production`, `OQELIRA_CONTAINER_RUNTIME=runsc`,
 `OQELIRA_WORKER_IMAGE=<registry/image>@sha256:<digest>` and the same runner token.
 Keep its HTTP listener on loopback behind the private TLS proxy. The runner has
-no Foundry or database credentials. Its host filesystem/daemon access is privileged
+no Foundry or database credentials.
+Runner limits are read only from the runner's environment, never from requests:
+`OQELIRA_WORKER_MEMORY` (default `1g`), `OQELIRA_RUNNER_MAX_JOBS` (default `3`)
+and `OQELIRA_RUNNER_MEMORY_BUDGET` (default `3g`); startup fails if memory x jobs
+exceeds the budget (sized for the 3.9 GiB runner VM, since gVisor counts file cache
+as container memory). Its host filesystem/daemon access is privileged
 infrastructure and must never be exposed directly to users.
 
 ## Primary references
