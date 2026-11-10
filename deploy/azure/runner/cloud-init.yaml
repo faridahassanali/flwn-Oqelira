@@ -161,7 +161,12 @@ write_files:
         if [ -z "$id" ]; then
           id=$(( $(awk -F: 'BEGIN{m=9999}{if($2>m)m=$2}END{print m}' /etc/projid) + 1 ))
           echo "$name:$id" >> /etc/projid
-          echo "$id:$d" >> /etc/projects
+        fi
+        grep -qxF "$id:$d" /etc/projects || echo "$id:$d" >> /etc/projects
+        # Trust the directory, not the files: a volume that was deleted and recreated under the same name has the
+        # same /etc/projid entry but a fresh directory with no project. Re-apply whenever the real id differs.
+        cur=$(xfs_io -r -c lsproj "$d" 2>/dev/null | awk '{print $3}')
+        if [ "$cur" != "$id" ]; then
           # -s sets the project (with inherit flag) on the whole existing tree and new files inherit it.
           xfs_quota -x -c "project -s $name" "$ROOT" >/dev/null
           xfs_quota -x -c "limit -p bsoft=${QUOTA_GIB}g bhard=${QUOTA_GIB}g $name" "$ROOT"
@@ -191,17 +196,29 @@ write_files:
     content: |
       #!/usr/bin/env bash
       # Usage: sudo oqelira-restore.sh <project-uuid> <YYYY-MM-DD>   UNTESTED.
-      # Restores into the project volume (created if missing). Existing files are overwritten, not removed.
+      # Restores into a NEW, empty volume. It refuses an existing volume: a live volume is writable by the
+      # project's own (untrusted) workers, and extracting into it as root would follow their symlinks. To replace a
+      # volume, stop its workers, `docker volume rm oq-project-<uuid>`, then run this. The archive is unpacked by an
+      # unprivileged, network-less container as the worker user, so nothing is ever written by host root.
       set -euo pipefail
       P=${1:?project uuid}; DAY=${2:?date}
       [[ $P =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || { echo "bad uuid" >&2; exit 2; }
       [[ $DAY =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "bad date" >&2; exit 2; }
       . /etc/oqelira/backup.env
+      IMAGE=$(grep '^OQELIRA_WORKER_IMAGE=' /etc/oqelira/runner.env | cut -d= -f2-)
+      [ -n "$IMAGE" ] || { echo "worker image not set in runner.env" >&2; exit 2; }
+      if docker volume inspect "oq-project-$P" >/dev/null 2>&1; then
+        echo "volume oq-project-$P exists; stop its workers and remove it first" >&2; exit 3
+      fi
       export AZCOPY_AUTO_LOGIN_TYPE=MSI
-      docker volume inspect "oq-project-$P" >/dev/null 2>&1 || docker volume create "oq-project-$P" >/dev/null
-      D=/var/lib/oqelira/docker/volumes/oq-project-$P/_data
-      azcopy cp "https://$OQ_STORAGE_ACCOUNT.blob.core.windows.net/backups/$DAY/oq-project-$P.tar.zst" --from-to BlobPipe --log-level=ERROR \
-        | zstd -d -q | tar --numeric-owner --same-owner -C "$D" -xf -
+      docker volume create "oq-project-$P" >/dev/null
+      if ! azcopy cp "https://$OQ_STORAGE_ACCOUNT.blob.core.windows.net/backups/$DAY/oq-project-$P.tar.zst" --from-to BlobPipe --log-level=ERROR \
+        | zstd -d -q \
+        | docker run --rm -i --runtime runsc --network none --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 \
+            --mount "type=volume,source=oq-project-$P,target=/w" --entrypoint tar "$IMAGE" --no-same-owner --no-same-permissions -C /w -xf -; then
+        docker volume rm "oq-project-$P" >/dev/null 2>&1 || true
+        echo "restore failed; the partial volume was removed" >&2; exit 4
+      fi
       echo "restored oq-project-$P from $DAY"
 
   - path: /etc/oqelira/Caddyfile
