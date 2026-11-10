@@ -15,7 +15,7 @@ import { RunJournal, tailRun } from './journal.js'
 import type { RunChannel } from './channel.js'
 import {mayWrite,mayAdmin} from './access.js'
 import { issueToken } from '@oqelira/gateway/tokens'
-import { isBlocked, revokeUser, blockUser, unblockUser } from '@oqelira/gateway/store'
+import { isBlocked, revokedBefore, revokeUser, blockUser, unblockUser } from '@oqelira/gateway/store'
 import type { Db } from '@oqelira/gateway/store'
 
 interface Options { auth: Auth; store: Store; channel: RunChannel; sandbox: Sandbox; origin: string; dist: string; models: readonly ModelConfig[]; provider: (model: ModelConfig) => ModelProvider; authCapabilities?:HostConfig['auth']; gateway?: { tokenKey: Buffer; db: Db; ttlSeconds?: number } }
@@ -81,6 +81,8 @@ export function createCloudServer(opts: Options) {
         // Same gate as starting a run: a token spends model quota, so viewers do not get one.
         if (!mayWrite(membership.role)) throw new HttpError(403, 'Your team role cannot use the model gateway')
         if (await isBlocked(gw.db, user, org)) throw new HttpError(403, 'Gateway access revoked')
+        // A self revoke ends the right to mint for sessions that already existed, so a stolen session cannot just mint again.
+        if (new Date(session.session.createdAt).getTime() <= await revokedBefore(gw.db, user)) throw new HttpError(403, 'Sign in again to get a new gateway token')
         const ttl = gw.ttlSeconds ?? 900
         reply(res, 200, { token: issueToken({ sub: user, org, dev: device }, gw.tokenKey, ttl), expiresIn: ttl }); return
       }
