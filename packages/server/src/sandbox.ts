@@ -4,7 +4,10 @@ import { builtinTools } from '@oqelira/core'
 import type { Tool } from '@oqelira/core'
 
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-export interface Sandbox { tools(project: string): Tool[] }
+export interface GitRequest { action: 'clone' | 'pull'; project: string; repo: string; branch?: string; token: string }
+export interface GitResult { branch: string; commit: string; changed?: number; bytes?: number }
+export class GitError extends Error {}
+export interface Sandbox { tools(project: string): Tool[]; git?(request: GitRequest, signal?: AbortSignal): Promise<GitResult> }
 const MIB = (v: string, name: string) => {
   const m = /^([1-9]\d{0,5})([mg])$/.exec(v.trim().toLowerCase())
   if (!m) throw new Error(`${name} must look like 512m or 1g, got "${v}"`)
@@ -29,6 +32,7 @@ export function dockerArgs(project: string, container: string, image: string, ru
 }
 export class DockerSandbox implements Sandbox {
   constructor(private readonly image = 'oqelira-worker:local', private readonly runtime?: string, private readonly memory = '1g') {}
+  async git(): Promise<GitResult> { throw new GitError('GitHub import is not available in local mode') }
   tools(project: string): Tool[] {
     return builtinTools.map(tool => ({ ...tool, run: async (input, ctx) => {
       ctx.signal?.throwIfAborted()

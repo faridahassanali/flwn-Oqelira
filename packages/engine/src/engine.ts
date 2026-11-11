@@ -28,7 +28,7 @@ import { noStore, openSessionStore } from './store.js'
 import type { SessionInfo, SessionStore, Snapshot } from './store.js'
 import { UsageTracker, usageLimitsFromEnv } from './usage.js'
 import type { UsageSnapshot } from './usage.js'
-import { hardDenyReason } from './classifier.js'
+import { classifierGate, hardDenyReason } from './classifier.js'
 import { gitDiff, gitHistory, sessionFiles } from './git.js'
 import type { GitCommitDiff, GitCommitSummary } from './git.js'
 import { openCustomizations } from './customizations.js'
@@ -149,11 +149,7 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
     if (rules.allows(req)) return 'allow'
     const custom = await opts.decide?.(req)
     if (custom) return custom
-    if (!decideCommand) return undefined
-    try {
-      const result = await decideCommand(typeof (req.input as { command?: unknown })?.command === 'string' ? (req.input as { command: string }).command : '')
-      return result?.allow ? 'allow' : result?.reason ? { decision: undefined, reason: `classifier: ${result.reason}` } : undefined
-    } catch { return undefined }
+    return classifierGate(decideCommand, req)
   }
   const system = DEFAULT_SYSTEM + readProjectRules(cwd)
   const usageLimits = usageLimitsFromEnv()

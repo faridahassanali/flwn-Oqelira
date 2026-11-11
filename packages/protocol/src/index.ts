@@ -5,7 +5,7 @@ export interface HostConfig {
   configured: boolean
   mode?: 'server'
   user?: { id: string; name: string;email?:string;emailVerified?:boolean } | null
-  auth?: {signup:boolean;emailRecovery:boolean;verification:boolean;socialProviders:('google'|'github')[]}
+  auth?: {signup:boolean;emailRecovery:boolean;verification:boolean;socialProviders:('google'|'github')[];githubConnect?:boolean}
 }
 export interface Approval {
   id: string

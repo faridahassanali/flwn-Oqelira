@@ -25,6 +25,7 @@
     "foundry:check": "node --import tsx packages/core/scripts/check-connection.ts",
     "classifier:eval": "node --import tsx packages/engine/scripts/evaluate-classifier.ts",
     "extension:build": "npm run build -w oqelira-vscode",
-    "extension:package": "npm run package -w oqelira-vscode"
+    "extension:package": "npm run package -w oqelira-vscode",
+    "prompt:eval": "npm run prompt:eval -w @oqelira/core"
   }
 }
