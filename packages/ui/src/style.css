@@ -1802,3 +1802,69 @@ h1 {
     font-size:2rem
   }
 }
+.connection-card {
+  display:grid;
+  gap:var(--s-4);
+  max-width:var(--measure);
+  padding:var(--s-6);
+  border-radius:var(--r);
+  background:var(--pastel-blue);
+  box-shadow:var(--shadow)
+}
+.connection-card>p {
+  font-size:.875rem;
+  color:var(--ink-72)
+}
+.connection-head {
+  display:flex;
+  align-items:center;
+  gap:var(--s-4)
+}
+.connection-head>div {
+  min-width:0;
+  flex:1
+}
+.connection-head h2 {
+  font-size:1.25rem
+}
+.connection-head small {
+  color:var(--ink-72)
+}
+.connection-mark {
+  display:grid;
+  place-items:center;
+  width:3rem;
+  height:3rem;
+  flex-shrink:0;
+  border-radius:var(--r);
+  background:var(--white)
+}
+.connection-card .notice {
+  margin:0
+}
+.connection-card .load-state {
+  position:static;
+  border:0;
+  background:transparent;
+  padding:0
+}
+.chip.ok {
+  background:var(--pastel-green)
+}
+.chip.warn {
+  background:var(--pastel-salmon)
+}
+.confirm {
+  display:grid;
+  gap:var(--s-3);
+  padding:var(--s-4);
+  border-radius:var(--r);
+  background:var(--white)
+}
+.confirm p {
+  font-size:.875rem
+}
+.settings-connections strong {
+  display:block;
+  margin-top:var(--s-1)
+}

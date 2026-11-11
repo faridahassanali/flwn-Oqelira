@@ -5,6 +5,8 @@ export interface HostConfig {
   configured: boolean
   mode?: 'server'
   user?: { id: string; name: string;email?:string;emailVerified?:boolean } | null
+  /** True when the server has a GitHub OAuth app configured for repository access. */
+  githubConnect?: boolean
   auth?: {signup:boolean;emailRecovery:boolean;verification:boolean;socialProviders:('google'|'github')[]}
 }
 export interface Approval {

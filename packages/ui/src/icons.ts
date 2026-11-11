@@ -3,7 +3,7 @@ import {
   Settings, PanelsTopLeft, Brain, Plus, ArrowUpRight, ArrowUp, Square,
   ChevronDown, X, Check, Circle, LoaderCircle, Ellipsis, PanelRight,
   LogOut, Copy, FileText, RefreshCw, ArrowLeft, ShieldCheck, Sparkles, Users,
-  ChevronRight, Folder, File, Pencil,
+  ChevronRight, Folder, File, Pencil, Plug, Unplug, Search, Lock, Download,
 } from 'lucide'
 
 const icons = {
@@ -12,7 +12,7 @@ const icons = {
   ArrowUpRight, Send: ArrowUp, Stop: Square, ChevronDown, Close: X, Check,
   Circle, LoaderCircle, More: Ellipsis, PanelRight, LogOut, Copy, FileText,
   Refresh: RefreshCw, Back: ArrowLeft, ShieldCheck, Sparkles,
-  ChevronRight, Folder, FolderOpen, File, Pencil,
+  ChevronRight, Folder, FolderOpen, File, Pencil, Plug, Unplug, Search, Lock, Download, Connections: Plug,
 }
 export type IconName = keyof typeof icons
 export function icon(name: IconName, className = ''): string {

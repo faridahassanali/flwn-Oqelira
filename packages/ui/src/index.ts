@@ -7,9 +7,11 @@ import { icon } from './icons.js'
 import type { IconName } from './icons.js'
 import { exitElement, timing } from './motion.js'
 import { navGroups, navLabel } from './nav.js'
-import { joinPath, parseListing } from './files.js'
-import { filesPage, gitPage } from './views.js'
-import type { TreeNode } from './views.js'
+import { parseListing } from './files.js'
+import { connectionsPage, filesPage, gitPage, settingsConnections } from './views.js'
+import type { GithubUi, TreeNode } from './views.js'
+import { connectGithub, describeFailure, disconnectGithub, githubReturn, githubStatus, withoutGithubReturn } from './github.js'
+import type { GithubStatus } from './github.js'
 
 /** Shared renderer for the browser and sandboxed desktop. No credentials or model SDKs. */
 export function mountWorkspace(root: HTMLElement): () => void {
@@ -49,7 +51,15 @@ export function mountWorkspace(root: HTMLElement): () => void {
   let openedFile: { path: string; text?: string; error?: string; loading?: boolean } | undefined
   let editing: 'none' | 'edit' | 'new' = 'none'
   let gitRaw: string | undefined, gitLoading = false, gitError = ''
-  const resetProjectViews = () => { tree.clear(); expanded.clear(); openedFile = undefined; editing = 'none'; gitRaw = undefined; gitLoading = false; gitError = '' }
+  let ghStatus: GithubStatus | undefined, ghLoading = false, ghError = '', ghReconnect = false, ghConfirm = false, ghBusy = false
+  const ghUi = (): GithubUi => ({ status: ghStatus, capable: config?.githubConnect, loading: ghLoading, error: ghError, reconnect: ghReconnect, confirming: ghConfirm, busy: ghBusy })
+  async function loadGithub() {
+    if (config?.mode !== 'server' || ghLoading || config.githubConnect === false) return
+    ghLoading = true; ghError = ''; render()
+    try { ghStatus = await githubStatus() } catch (e) { ghError = describeFailure(e, 'Could not check GitHub') }
+    ghLoading = false; render()
+  }
+  const resetProjectViews =() => { tree.clear(); expanded.clear(); openedFile = undefined; editing = 'none'; gitRaw = undefined; gitLoading = false; gitError = '' }
   const activity: { id: string; name: string; input: unknown; output?: string; isError?: boolean }[] = []
   let section = 'Chat'
   let tab = 'Task'
@@ -130,6 +140,7 @@ export function mountWorkspace(root: HTMLElement): () => void {
   function enter(name: string) {
     section = name; notice = ''; moreOpen = false
     if (name === 'Teams') { busy(true); void loadTeams().then(() => { busy(false); render() }).catch(() => { error = 'Could not load teams'; busy(false); render() }) }
+    if (['Connections', 'Settings'].includes(name) && !ghStatus && !ghError) void loadGithub()
     if (config?.mode === 'server' && projectId) {
       if (name === 'Explorer' && !tree.has('.')) void loadDir('.')
       if (name === 'Git' && gitRaw === undefined && !gitLoading && !gitError) void loadGit()
@@ -211,6 +222,19 @@ export function mountWorkspace(root: HTMLElement): () => void {
     root.querySelector('[data-edit-file]')?.addEventListener('click', () => { editing = 'edit'; resetForms = true; render(); root.querySelector<HTMLTextAreaElement>('#file-form textarea')?.focus() }, { signal })
     root.querySelector('[data-new-file]')?.addEventListener('click', () => { editing = 'new'; resetForms = true; render(); root.querySelector<HTMLInputElement>('#file-form input')?.focus() }, { signal })
     root.querySelector('[data-edit-cancel]')?.addEventListener('click', () => { editing = 'none'; resetForms = true; render() }, { signal })
+    root.querySelector('[data-gh-retry]')?.addEventListener('click', () => { ghError = ''; ghStatus = undefined; void loadGithub() }, { signal })
+    root.querySelector('[data-gh-connect]')?.addEventListener('click', () => {
+      if (ghBusy) return
+      ghBusy = true; ghError = ''; render()
+      void connectGithub().catch(e => { ghBusy = false; ghError = describeFailure(e, 'Could not start the GitHub connection'); render() })
+    }, { signal })
+    root.querySelector('[data-gh-disconnect]')?.addEventListener('click', () => { ghConfirm = true; render(); root.querySelector<HTMLElement>('[data-gh-disconnect-yes]')?.focus() }, { signal })
+    root.querySelector('[data-gh-disconnect-no]')?.addEventListener('click', () => { ghConfirm = false; render(); root.querySelector<HTMLElement>('[data-gh-disconnect]')?.focus() }, { signal })
+    root.querySelector('[data-gh-disconnect-yes]')?.addEventListener('click', () => {
+      if (ghBusy) return
+      ghBusy = true; render()
+      void disconnectGithub().then(() => { ghStatus = { configured: true, connected: false }; ghReconnect = false; notice = 'GitHub disconnected.' }).catch(e => { ghError = describeFailure(e, 'Could not disconnect GitHub') }).finally(() => { ghBusy = false; ghConfirm = false; render() })
+    }, { signal })
     root.querySelectorAll('[data-load-git]').forEach(button => button.addEventListener('click', () => { gitRaw = undefined; gitError = ''; void loadGit() }, { signal }))
     root.querySelector<HTMLFormElement>('#file-form')?.addEventListener('submit', event => {
       event.preventDefault(); if (!projectId || cloudBusy || activeRun || projectReadOnly()) return
@@ -378,6 +402,7 @@ export function mountWorkspace(root: HTMLElement): () => void {
   function panelContent() {
     if (config?.mode === 'server' && section === 'Explorer') return filesPage({ projectId, tree, expanded, file: openedFile, editing, readOnly: projectReadOnly(), disabled: cloudBusy || !!activeRun })
     if (config?.mode === 'server' && section === 'Git') return gitPage({ projectId, raw: gitRaw, loading: gitLoading, error: gitError, source: '', disabled: !!activeRun })
+    if (section === 'Connections' && config?.mode === 'server') return connectionsPage(ghUi())
     if(section==='Teams')return teamsContent()
     if (section === 'Projects') return `<div class="page-panel"><h1>Your projects.</h1><p>Each project has its own files, conversations and memory.</p><form id="project-form"><label>Project name<input name="name" required maxlength="120"></label><label>Workspace<select name="organizationId"><option value="">Personal</option>${teams.filter(team=>team.role.split(',').some(role=>['owner','admin'].includes(role))).map(team=>`<option value="${escape(team.id)}">${escape(team.name)}</option>`).join('')}</select></label><button type="submit" ${cloudBusy || activeRun ? 'disabled' : ''}>Create project</button></form>${projects.map(p => `<div class="info-card">${escape(p.name)}</div>`).join('')}</div>`
     if (section === 'Memory') return `<div class="page-panel"><h1>Project memory.</h1><p>Notes are recalled in this project's conversations. Never save credentials here.</p>${projectId ? `<form id="memory-form"><label>Project fact<textarea name="content" required maxlength="4000"></textarea></label><button type="submit" ${cloudBusy || activeRun || projectReadOnly() ? 'disabled' : ''}>Save memory</button></form>${memories.map(m => `<div class="info-card memory-card"><p>${escape(m.content)}</p><button data-forget="${escape(m.id)}" ${cloudBusy || activeRun || projectReadOnly() ? 'disabled' : ''}>Remove</button></div>`).join('')}` : '<p>Choose a project first.</p>'}</div>`
@@ -389,7 +414,7 @@ export function mountWorkspace(root: HTMLElement): () => void {
       Settings: ['Make yourself at home', config?.mode === 'server' ? 'Signed in to your Oqelira account. Project memory and conversations are stored in PostgreSQL. Foundry deployment names come from server configuration. Flwn integration is separate.' : 'This is local mode. Connect Desktop to your Oqelira server for accounts, saved conversations and project memory.'],
     }
     const [title, description] = panels[section]!
-    return `<div class="page-panel"><span class="welcome-spark">${icons[section]}</span><h1>${title}.</h1><p>${description}</p><div class="info-card"><strong>${escape(config?.workspace ?? 'Connecting')}</strong><p>Your credentials stay outside the shared UI.</p></div>${section==='Settings'&&config?.mode==='server'?`${config.auth?.emailRecovery&&!config.user?.emailVerified?'<button data-verify-account>Verify email address</button>':''}${!navigator.userAgent.includes('Electron/')?(config.auth?.socialProviders??[]).map(provider=>`<button class="social-button" data-link-provider="${provider}">Connect ${provider==='google'?'Google':'GitHub'}</button>`).join(''):''}`:''}</div>`
+    return `<div class="page-panel"><span class="welcome-spark">${icons[section]}</span><h1>${title}.</h1><p>${description}</p><div class="info-card"><strong>${escape(config?.workspace ?? 'Connecting')}</strong><p>Your credentials stay outside the shared UI.</p></div>${section==='Settings'&&config?.mode==='server'?`${settingsConnections(ghUi())}${config.auth?.emailRecovery&&!config.user?.emailVerified?'<button data-verify-account>Verify email address</button>':''}${!navigator.userAgent.includes('Electron/')?(config.auth?.socialProviders??[]).filter(provider=>provider!=='github').map(provider=>`<button class="social-button" data-link-provider="${provider}">Connect ${provider==='google'?'Google':'GitHub'}</button>`).join(''):''}`:''}</div>`
   }
   function inspectorContent() {
     const files = [...new Set(activity.filter(t => ['write_file', 'edit_file', 'apply_file_change', 'revert_file_change'].includes(t.name) && t.output !== undefined && !t.isError).map(t => String((t.input as Record<string, unknown>).path ?? '')))]
@@ -398,12 +423,22 @@ export function mountWorkspace(root: HTMLElement): () => void {
     const task = tasks[tasks.length - 1]
     return `<div class="section-heading"><p class="eyebrow">Keep it in focus</p><h2>Current task.</h2></div><div class="task-card ${pending ? 'decision-card' : activeRun ? 'progress-card' : task?.done ? 'done-card' : ''}"><span class="status"><span class="status-dot"></span>${pending ? 'Awaiting approval' : escape(task?.status ?? 'Ready when you are')}</span><h3>${escape(task?.text ?? 'A fresh start for your next idea.')}</h3><p>${activeRun ? 'Follow your agent’s progress in the conversation.' : task?.done ? 'Your result is ready in the conversation.' : 'Start a conversation and take the next step.'}</p>${task?.done ? `<div class="task-done">${icon('Check','draw-check')} Done</div>` : ''}</div><details open data-detail="changed-files"><summary><span>Files changed</span><span class="count">${files.length}</span>${icon('ChevronDown','chevron')}</summary>${files.map(file => `<p class="file-name">${icon('FileText')}${escape(file)}</p>`).join('') || '<p class="muted">No changes yet.</p>'}</details><details data-detail="commands"><summary><span>Commands</span><span class="count">${activity.filter(t => t.name === 'run_command').length}</span>${icon('ChevronDown','chevron')}</summary>${toolContent(activity.filter(t => t.name === 'run_command'))}</details><details data-detail="tools"><summary><span>Tool calls</span><span class="count">${activity.length}</span>${icon('ChevronDown','chevron')}</summary>${toolContent()}</details>`
   }
+  /** Handles the redirect back from GitHub: report the result, drop the query, and refresh the status. */
+  function afterSignIn() {
+    const back = githubReturn(location.search)
+    if (!back || config?.mode !== 'server') return
+    history.replaceState(null, '', withoutGithubReturn(new URL(location.href)))
+    section = 'Connections'
+    if (back === 'connected') notice = 'GitHub connected. Your repositories are ready to import.'
+    else { ghReconnect = true; error = 'GitHub could not be connected. Try again.' }
+    void loadGithub()
+  }
   render()
   void getConfig().then(async value => {
     config = value; model = value.models[0]?.id ?? ''
     if (value.mode === 'server' && (!value.user || (value.auth?.emailRecovery && new URL(location.href).searchParams.has('token')))) {
       authCleanup = showSignIn(root, value, next => { config = next; authCleanup?.(); void loadCloud().then(render).catch(() => { error = 'Could not load your projects'; render() }) })
-    } else { await loadCloud(); render() }
+    } else { await loadCloud(); afterSignIn(); render() }
   }).catch(() => { error = 'Cannot reach the Oqelira server. Check the service and sign in again.'; render() })
   return () => { disposed = true; authCleanup?.(); activeRun?.abort(); controller.abort(); cancelAnimationFrame(frame); clearTimeout(loadingTimer); clearTimeout(loadingExit); clearTimeout(copyTimer); viewTransition?.skipTransition(); root.replaceChildren() }
 }

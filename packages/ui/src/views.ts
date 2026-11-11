@@ -3,6 +3,7 @@ import { icon } from './icons.js'
 import { crumbs, joinPath, lineCount } from './files.js'
 import type { Listing } from './files.js'
 import { diffLines, parseGit, statusLabel } from './git.js'
+import type { GithubStatus } from './github.js'
 
 /** HTML builders for the Files and Git pages. State lives in the workspace; these only describe it. */
 export type TreeNode = Listing | 'loading' | { error: string }
@@ -77,4 +78,53 @@ export function gitPage(state: GitState): string {
     }
   }
   return `<div class="page-wide">${head}<div class="page-actions">${refresh}</div>${state.source}${body}</div>`
+}
+
+export interface GithubUi {
+  status?: GithubStatus
+  /** From /api/config; false hides the Connect button even before the status call answers. */
+  capable?: boolean
+  loading: boolean
+  error: string
+  reconnect: boolean
+  confirming: boolean
+  busy: boolean
+}
+
+export type GithubCardState = 'loading' | 'error' | 'unconfigured' | 'reconnect' | 'disconnected' | 'connected'
+/** Single source of truth for which GitHub card state shows; tested without a browser. */
+export function githubCardState(s: Pick<GithubUi, 'status' | 'capable' | 'error' | 'reconnect'>): GithubCardState {
+  if (s.error) return 'error'
+  if (s.capable === false) return 'unconfigured'
+  if (!s.status) return 'loading'
+  if (!s.status.configured) return 'unconfigured'
+  if (s.reconnect) return 'reconnect'
+  return s.status.connected ? 'connected' : 'disconnected'
+}
+
+export function githubCard(s: GithubUi): string {
+  const state = githubCardState(s)
+  const busy = s.busy ? 'disabled' : ''
+  const head = (chip: string) => `<div class="connection-head"><span class="connection-mark">${icon('Plug')}</span><div><h2>GitHub.</h2><small class="muted">Import repositories and keep them in sync.</small></div>${chip}</div>`
+  let body: string
+  switch (state) {
+    case 'loading': return `<section class="connection-card" aria-busy="true" aria-label="GitHub">${head('')}<div class="load-state" role="status"><span class="skeleton-line"></span></div></section>`
+    case 'error': body = `${head('')}<div class="notice error" role="alert"><div>${icon('Circle')}<span>${escape(s.error)}</span></div><button data-gh-retry data-fk="gh-retry">${icon('Refresh')} Try again</button></div>`; break
+    case 'unconfigured': body = `${head('<span class="chip">Not set up</span>')}<p>GitHub is not set up on this server. An administrator needs to add a GitHub app to the server configuration before anyone can connect.</p>`; break
+    case 'reconnect': body = `${head('<span class="chip warn">Needs attention</span>')}<div class="notice error" role="alert"><div>${icon('Circle')}<span>GitHub needs to be reconnected. Your access expired or was revoked.</span></div></div><div class="form-actions"><button class="primary" data-gh-connect data-fk="gh-connect" ${busy}>${icon('Plug')} Reconnect GitHub</button></div>`; break
+    case 'disconnected': body = `${head('<span class="chip">Not connected</span>')}<p>Connect GitHub to import a repository into a project. Oqelira asks for read access to your repositories and your profile name.</p><div class="form-actions"><button class="primary" data-gh-connect data-fk="gh-connect" ${busy}>${icon('Plug')} Connect GitHub</button></div>`; break
+    default: body = `${head('<span class="chip ok">Connected</span>')}<p>Connected as <strong>${escape(s.status?.login ?? 'your GitHub account')}</strong>.</p>${s.confirming ? `<div class="confirm" role="alertdialog" aria-label="Disconnect GitHub"><p>Disconnect GitHub? Imported projects keep their files, but you cannot import or pull until you connect again.</p><div class="form-actions"><button data-gh-disconnect-yes data-fk="gh-yes" ${busy}>Disconnect</button><button data-gh-disconnect-no data-fk="gh-no">Keep connected</button></div></div>` : `<div class="form-actions"><button data-gh-disconnect data-fk="gh-disconnect" ${busy}>${icon('Unplug')} Disconnect</button></div>`}`
+  }
+  return `<section class="connection-card" aria-label="GitHub">${body}</section>`
+}
+
+export function connectionsPage(s: GithubUi): string {
+  return `<div class="page-wide"><div class="page-title"><p class="eyebrow">Your accounts</p><h1>Connections.</h1><p>Link outside services so projects can use them. Nothing is shared until you connect.</p></div>${githubCard(s)}</div>`
+}
+
+/** Short row for Settings that points to the full Connections page. */
+export function settingsConnections(s: GithubUi): string {
+  const state = githubCardState(s)
+  const text = { loading: 'Checking GitHub.', error: 'Could not check GitHub.', unconfigured: 'Not set up on this server.', reconnect: 'Needs to be reconnected.', disconnected: 'Not connected.', connected: `Connected as ${s.status?.login ?? 'your account'}.` }[state]
+  return `<section class="info-card settings-connections"><p class="eyebrow">Connections</p><strong>GitHub</strong><p>${escape(text)}</p><button data-section="Connections" data-fk="settings-connections">Manage connections</button></section>`
 }
