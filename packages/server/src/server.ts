@@ -11,10 +11,11 @@ import type { Auth } from './auth.js'
 import { Store, recoverHistory } from './store.js'
 import { UUID } from './sandbox.js'
 import type { Sandbox } from './sandbox.js'
-import { RunJournal } from './journal.js'
+import { RunJournal, tailRun } from './journal.js'
+import type { RunChannel } from './channel.js'
 import {mayWrite,mayAdmin} from './access.js'
 
-interface Options { auth: Auth; store: Store; sandbox: Sandbox; origin: string; dist: string; models: readonly ModelConfig[]; provider: (model: ModelConfig) => ModelProvider; authCapabilities?:HostConfig['auth'] }
+interface Options { auth: Auth; store: Store; channel: RunChannel; sandbox: Sandbox; origin: string; dist: string; models: readonly ModelConfig[]; provider: (model: ModelConfig) => ModelProvider; authCapabilities?:HostConfig['auth'] }
 class HttpError extends Error { constructor(readonly status: number, message: string) { super(message) } }
 const requireId = (value: unknown): string => { if (typeof value !== 'string' || !UUID.test(value)) throw new HttpError(400, 'Invalid resource ID'); return value }
 const text = (value: unknown, max: number): string => { if (typeof value !== 'string' || !value.trim() || value.length > max) throw new HttpError(400, 'Invalid text'); return value.trim() }
@@ -122,12 +123,10 @@ export function createCloudServer(opts: Options) {
       if(!state)throw new HttpError(404,'Run not found')
       const current=runs.get(id)
       if(current&&(current.user!==user||current.authSession!==session.session.id))throw new HttpError(403,'Reconnect with the session that started this run')
+      if(!current){const activeSession=await opts.store.activeRunSession(user,id);if(activeSession&&activeSession!==session.session.id)throw new HttpError(403,'Reconnect with the session that started this run')}
       res.writeHead(200,{'Content-Type':'application/x-ndjson','Cache-Control':'no-store'});res.flushHeaders()
       if(current?.journal){await current.journal.connect(res,after);return}
-      const replay=new RunJournal(opts.store,owner!,'',id,()=>{})
-      await replay.connect(res,after)
-      if(!['done','error'].includes(state.type))res.write(JSON.stringify({type:'error',message:'Live execution is unavailable on this server. Saved history is retained; inspect the workspace before resuming.'})+'\n')
-      await replay.finish();return
+      await tailRun(opts.store,opts.channel,owner!,id,res,after);return
     }
     if(req.method==='POST'&&url.pathname==='/api/run/stop'){
       const data=await body(req),current=runs.get(requireId(data.runId))
@@ -140,13 +139,14 @@ export function createCloudServer(opts: Options) {
       if (typeof data.allowed !== 'boolean') throw new HttpError(400, 'Invalid decision')
       const current=runs.get(runId)
       if(current)await accessProject(current.project)
-      const owner=current?.owner??await opts.store.runOwner(user,runId)
+      const owner=current?.owner??await opts.store.runOwner(user,runId)??await opts.store.activeRunOwner(user,runId)
       if(!owner)throw new HttpError(404,'Run not found')
       const pending=await opts.store.pendingApproval(owner,session.session.id,runId,id)
       if(!pending)throw new HttpError(409,'Approval is no longer pending')
       await accessProject(pending.project_id,true)
       const decision=await opts.store.decideApproval(owner,session.session.id,runId,id,user,data.allowed)
       if(!decision)throw new HttpError(409,'Approval is no longer pending')
+      await opts.channel.wake(runId).catch(() => undefined)
       const conversation=await opts.store.conversation(owner,decision.conversation_id)
       if(!conversation)throw new HttpError(404,'Conversation not found')
       try { await opts.store.audit(owner, decision.conversation_id, runId, 'approval', decision.tool, data.allowed,user) }
@@ -165,7 +165,7 @@ export function createCloudServer(opts: Options) {
     if (!conversation || conversation.project_id !== project) throw new HttpError(404, 'Conversation not found')
     if (JSON.stringify(conversation.messages).length > 500000) throw new HttpError(413, 'Conversation context is full; start a new conversation')
     const runId = randomUUID()
-    if (!await opts.store.claim(owner, conversationId, runId)) throw new HttpError(409, 'This project is already running')
+    if (!await opts.store.claim(owner, conversationId, runId, session.session.id)) throw new HttpError(409, 'This project is already running')
     const run: Run = { user,owner,project,authSession: session.session.id, conversation: conversationId, controller: new AbortController() }
     runs.set(runId, run)
     const cancel = () => { run.controller.abort(); run.pending = undefined }
@@ -173,7 +173,7 @@ export function createCloudServer(opts: Options) {
     const reconnectable=data.reconnectable===true
     if(!reconnectable)res.on('close', cancel)
     res.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'Cache-Control': 'no-store' }); res.flushHeaders()
-    if(reconnectable){run.journal=new RunJournal(opts.store,owner,conversationId,runId,cancel);await run.journal.connect(res,0)}
+    if(reconnectable){run.journal=new RunJournal(opts.store,opts.channel,owner,conversationId,runId,cancel);await run.journal.connect(res,0)}
     const send = (event: HostEvent) => { if(run.journal)run.journal.publish(event);else if (!res.destroyed) res.write(JSON.stringify(event) + '\n') }
     send({ type: 'started', runId, sessionId: conversationId })
     let status = 'failed', renewing = false
@@ -213,7 +213,8 @@ export function createCloudServer(opts: Options) {
           while(Date.now()<timeout&&!run.controller.signal.aborted){
             const allowed=await opts.store.approvalDecision(owner,runId,id)
             if(typeof allowed==='boolean'){if(run.pending?.id===id)run.pending=undefined;return allowed}
-            await new Promise(resolve=>setTimeout(resolve,250))
+            // A decision on any replica wakes this loop; the 250 ms timer covers a lost notification.
+            await new Promise<void>(resolve=>{const timer=setTimeout(done,250),off=opts.channel.watch(runId,done);function done(){clearTimeout(timer);off();resolve()}})
           }
           if(run.pending?.id===id)run.pending=undefined
           return false

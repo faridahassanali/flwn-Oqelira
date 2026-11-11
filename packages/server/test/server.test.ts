@@ -10,6 +10,7 @@ import type { HostEvent } from '@oqelira/protocol'
 import { createAuth } from '../src/auth.js'
 import { migrate } from '../src/migrate.js'
 import { Store, recoverHistory } from '../src/store.js'
+import { PostgresRunChannel } from '../src/channel.js'
 import { createCloudServer } from '../src/server.js'
 import { serverConfig } from '../src/config.js'
 import { dockerArgs } from '../src/sandbox.js'
@@ -56,7 +57,7 @@ test('real auth, durable PostgreSQL sessions, tenant isolation, memory and appro
       yield { type: 'finish', reason: 'tool-calls' }
     } else { yield { type: 'text-delta', text: 'Saved' }; yield { type: 'finish', reason: 'stop' } }
   } }
-  const server = createCloudServer({ auth, store, sandbox: { tools: () => builtinTools.map(tool => ({...tool, run: async () => 'fixture output'})) }, origin: config.baseURL, dist: path.resolve('packages/web/dist'), models: [{ id: 'fixture', deployment: 'fixture-deployment', api: 'chat', speed: 'fast' }], provider: () => provider })
+  const server = createCloudServer({ auth, store, channel:await PostgresRunChannel.open(pool,(c,cb)=>db.listen(c,cb)), sandbox: { tools: () => builtinTools.map(tool => ({...tool, run: async () => 'fixture output'})) }, origin: config.baseURL, dist: path.resolve('packages/web/dist'), models: [{ id: 'fixture', deployment: 'fixture-deployment', api: 'chat', speed: 'fast' }], provider: () => provider })
   const address = await server.listen(port)
   assert.ok(address && typeof address !== 'string')
   const origin = `http://127.0.0.1:${address.port}`
@@ -107,11 +108,11 @@ test('real auth, durable PostgreSQL sessions, tenant isolation, memory and appro
     assert.equal((await new Store(pool).memory(a.data.user.id, project.id))[0]!.content, 'Use the pastel theme')
     const second = await store.createConversation(a.data.user.id, project.id, 'Second conversation', 'fixture')
     const firstRun = randomUUID(), otherRun = randomUUID()
-    assert.equal(await store.claim(a.data.user.id, conversation, firstRun), true)
+    assert.equal(await store.claim(a.data.user.id, conversation, firstRun, 'fixture-session-a'), true)
     assert.equal((await request('/api/file', a.cookie, { projectId:project.id,path:'a.txt',content:'race' })).status, 409)
-    assert.equal(await store.claim(a.data.user.id, second, otherRun), false)
+    assert.equal(await store.claim(a.data.user.id, second, otherRun, 'fixture-session-a'), false)
     await store.release(a.data.user.id, conversation, firstRun, 'ready')
-    assert.equal(await store.claim(a.data.user.id, second, otherRun), true)
+    assert.equal(await store.claim(a.data.user.id, second, otherRun, 'fixture-session-a'), true)
     await store.release(a.data.user.id, second, otherRun, 'ready')
     assert.equal(await store.takeQuota(a.data.user.id, 'fixture', 1, 3600), true)
     assert.equal(await store.takeQuota(a.data.user.id, 'fixture', 1, 3600), false)
