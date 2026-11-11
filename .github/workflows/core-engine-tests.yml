@@ -1,0 +1,34 @@
+name: Core and engine tests
+
+on:
+  pull_request:
+    paths:
+      - 'packages/core/**'
+      - 'packages/engine/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/core-engine-tests.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/core/**'
+      - 'packages/engine/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/core-engine-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  core-engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck -w @oqelira/core -w @oqelira/engine
+      - run: npm run test -w @oqelira/core -w @oqelira/engine
