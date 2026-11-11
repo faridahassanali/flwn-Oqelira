@@ -6,6 +6,10 @@ import { brand } from './brand.js'
 import { icon } from './icons.js'
 import type { IconName } from './icons.js'
 import { exitElement, timing } from './motion.js'
+import { navGroups, navLabel } from './nav.js'
+import { joinPath, parseListing } from './files.js'
+import { filesPage, gitPage } from './views.js'
+import type { TreeNode } from './views.js'
 
 /** Shared renderer for the browser and sandboxed desktop. No credentials or model SDKs. */
 export function mountWorkspace(root: HTMLElement): () => void {
@@ -41,7 +45,11 @@ export function mountWorkspace(root: HTMLElement): () => void {
   let conversations: SavedConversation[] = []
   let memories: { id: string; content: string }[] = []
   let cloudBusy = false
-  let directory = '.', listing: string[] = [], filePath = '', fileText = '', gitDiff = ''
+  const tree = new Map<string, TreeNode>(), expanded = new Set<string>()
+  let openedFile: { path: string; text?: string; error?: string; loading?: boolean } | undefined
+  let editing: 'none' | 'edit' | 'new' = 'none'
+  let gitRaw: string | undefined, gitLoading = false, gitError = ''
+  const resetProjectViews = () => { tree.clear(); expanded.clear(); openedFile = undefined; editing = 'none'; gitRaw = undefined; gitLoading = false; gitError = '' }
   const activity: { id: string; name: string; input: unknown; output?: string; isError?: boolean }[] = []
   let section = 'Chat'
   let tab = 'Task'
@@ -63,7 +71,7 @@ export function mountWorkspace(root: HTMLElement): () => void {
   async function loadProject(id: string) {
     if (activeRun || cloudBusy) return
     busy(true); clearConversation(); projectId = id
-    directory = '.'; listing = []; filePath = ''; fileText = ''; gitDiff = ''
+    resetProjectViews()
     try { [conversations, memories] = await Promise.all([api<SavedConversation[]>('conversations?projectId=' + id), api<{id:string;content:string}[]>('memory?projectId=' + id)]); section = 'Chat' }
     catch (e) { error = e instanceof Error ? e.message : 'Could not load project' }
     finally { busy(false); render() }
@@ -93,12 +101,40 @@ export function mountWorkspace(root: HTMLElement): () => void {
     } catch (e) { error = e instanceof Error ? e.message : 'Could not open conversation' }
     finally { busy(false); render() }
   }
-  async function loadFiles(path = '.') {
-    if (!projectId || cloudBusy || activeRun) return
-    busy(true)
-    try { const result = await api<{output:string}>('files?projectId=' + projectId + '&path=' + encodeURIComponent(path)); listing = result.output.split('\n').filter(Boolean); directory = path }
-    catch (e) { error = e instanceof Error ? e.message : 'Could not list files' }
-    finally { busy(false); render() }
+  /** Lists one folder. Each folder loads on demand, so a large project never lists everything at once. */
+  async function loadDir(path: string) {
+    const id = projectId
+    if (!id) return
+    tree.set(path, 'loading'); render()
+    try { const result = await api<{output:string}>('files?projectId=' + encodeURIComponent(id) + '&path=' + encodeURIComponent(path)); if (id === projectId) tree.set(path, parseListing(result.output)) }
+    catch (e) { if (id === projectId) tree.set(path, { error: e instanceof Error ? e.message : 'Could not list this folder' }) }
+    if (id === projectId) render()
+  }
+  async function openFile(path: string) {
+    const id = projectId
+    if (!id) return
+    editing = 'none'; openedFile = { path, loading: true }; render()
+    try { const result = await api<{output:string}>('file?projectId=' + encodeURIComponent(id) + '&path=' + encodeURIComponent(path)); if (id === projectId && openedFile?.path === path) openedFile = { path, text: result.output } }
+    catch (e) { if (id === projectId && openedFile?.path === path) openedFile = { path, error: e instanceof Error ? e.message : 'Could not read this file' } }
+    if (id === projectId) { render(); if (matchMedia('(max-width:60rem)').matches) root.querySelector('.files-viewer')?.scrollIntoView({ block: 'start' }) }
+  }
+  async function loadGit() {
+    const id = projectId
+    if (!id || gitLoading) return
+    gitLoading = true; gitError = ''; render()
+    try { const result = await api<{output:string}>('git?projectId=' + encodeURIComponent(id)); if (id === projectId) gitRaw = result.output }
+    catch (e) { if (id === projectId) gitError = e instanceof Error ? e.message : 'Could not load Git' }
+    if (id === projectId) { gitLoading = false; render() }
+  }
+  /** Opens a section and starts whatever data it needs the first time. */
+  function enter(name: string) {
+    section = name; notice = ''; moreOpen = false
+    if (name === 'Teams') { busy(true); void loadTeams().then(() => { busy(false); render() }).catch(() => { error = 'Could not load teams'; busy(false); render() }) }
+    if (config?.mode === 'server' && projectId) {
+      if (name === 'Explorer' && !tree.has('.')) void loadDir('.')
+      if (name === 'Git' && gitRaw === undefined && !gitLoading && !gitError) void loadGit()
+    }
+    render()
   }
   function render() {
     if (disposed) return
@@ -119,6 +155,8 @@ export function mountWorkspace(root: HTMLElement): () => void {
     if (!changingSection && !resetForms) root.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('form[id] [name]').forEach(field => { if (field.type !== 'password') formValues.set(`${field.closest('form')!.id}:${field.name}`, field.value) })
     const textarea = root.querySelector<HTMLTextAreaElement>('#prompt')
     const focused = textarea === document.activeElement
+    // Re-rendering replaces every node, so keyboard focus on a keyed control is restored afterwards.
+    const focusKey = root.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.fk : undefined
     if (textarea) draft = textarea.value
     controller.abort()
     controller = new AbortController()
@@ -126,12 +164,13 @@ export function mountWorkspace(root: HTMLElement): () => void {
     lastSection = section
     lastTab = tab
     root.classList.toggle('inspector-open', inspectorOpen)
-    const primary: IconName[] = config?.mode === 'server' ? ['Chat','Projects','Explorer','Git'] : ['Chat','Explorer','Git']
-    const secondary: IconName[] = config?.mode === 'server' ? ['Tasks','Terminal','Memory','Teams','Settings'] : ['Tasks','Terminal','Settings']
+    const { primary, secondary } = navGroups(config?.mode === 'server')
+    const navButton = (name: IconName) => `<button data-section="${name}" data-fk="nav-${name}" class="nav-item ${section === name ? 'selected' : ''}" ${section === name ? 'aria-current="page"' : ''}>${icon(name)}<span>${navLabel(name)}</span></button>`
     root.innerHTML = `
-      <aside class="sidebar">
+      <aside class="sidebar ${moreOpen ? 'more-open' : ''}">
         <a class="brand" href="#" aria-label="Oqelira by Flwn">${brand()}</a>
-        <nav aria-label="Main navigation">${primary.map(name => `<button data-section="${name}" class="nav-item ${section === name ? 'selected' : ''}" ${section === name ? 'aria-current="page"' : ''}>${icon(name)}<span>${name === 'Explorer' ? 'Files' : name}</span></button>`).join('')}<div class="nav-more"><button class="nav-item ${secondary.includes(section as IconName) ? 'selected' : ''}" data-action="more" aria-haspopup="menu" aria-expanded="${moreOpen}" aria-controls="tools-menu">${icon('More')}<span>Tools</span>${icon('ChevronDown','chevron')}</button>${moreOpen ? `<div class="tools-menu" id="tools-menu" role="menu" aria-label="Workspace tools">${secondary.map(name => `<button role="menuitem" data-section="${name}">${icon(name)}<span>${name}</span></button>`).join('')}</div>` : ''}</div></nav>
+        <nav aria-label="Main navigation" class="nav-primary"><p class="eyebrow nav-label">Workspace</p>${primary.map(navButton).join('')}<button class="nav-item nav-more-toggle ${secondary.includes(section as IconName) ? 'selected' : ''}" data-action="more" data-fk="more-toggle" aria-expanded="${moreOpen}" aria-controls="more-nav">${icon('More')}<span>More</span>${icon('ChevronDown','chevron')}</button></nav>
+        <nav aria-label="More tools" class="nav-secondary" id="more-nav"><p class="eyebrow nav-label">More</p>${secondary.map(navButton).join('')}</nav>
         <div class="recent"><p class="eyebrow">This conversation</p><button data-action="chat" class="session">${icon('Chat')}<span>${escape(tasks[0]?.text.slice(0, 45) ?? 'A fresh start')}<small>${tasks.length} request${tasks.length === 1 ? '' : 's'}</small></span></button></div>
         ${config?.mode === 'server' ? `<div class="saved-sessions"><p class="eyebrow">Saved conversations</p>${conversations.map(c => `<button data-conversation="${escape(c.id)}" ${activeRun || cloudBusy ? 'disabled' : ''}>${icon('Chat')}<span>${escape(c.title.slice(0, 45))}</span></button>`).join('') || '<p class="sidebar-empty">Your conversations will live here.</p>'}</div>` : '<div class="local-note"><span class="eyebrow">Your workspace</span><p>One idea at a time.</p></div>'}
         <button class="new-session" data-action="new" ${activeRun ? 'disabled' : ''}>${icon('Plus')}<span>New conversation</span></button>
@@ -147,27 +186,44 @@ export function mountWorkspace(root: HTMLElement): () => void {
       ${pending ? approvalContent() : ''}
       ${section === 'Chat' ? `<form class="composer"><label class="sr-only" for="prompt">Message Oqelira</label><textarea id="prompt" name="prompt" ${projectReadOnly()?'readonly':''} placeholder="Ask Oqelira anything…" rows="2" required maxlength="10000" ${activeRun ? 'disabled' : ''}>${escape(draft)}</textarea><div class="composer-bar"><span class="mode-pill">${icon('ShieldCheck')}<span>${activeRun ? pending ? 'Waiting for your approval' : tasks.at(-1)?.status==='Reconnecting'?'Reconnecting to your run':'Working with your project' : projectReadOnly()?'Read-only access':'Ask before changes'}</span></span><span class="composer-hint">Enter to send · Shift + Enter for a new line</span>${activeRun ? `<button class="stop" type="button" data-action="stop">${icon('Stop')} Stop</button>` : `<button class="send" type="submit" aria-label="Send message" data-tooltip="Send message" ${!config?.configured || projectReadOnly() ? 'disabled' : ''}>${icon('Send')}</button>`}</div></form>` : ''}</main>
       ${inspectorOpen ? '<button class="inspector-scrim" data-action="inspector" aria-label="Close workspace details"></button>' : ''}<aside class="inspector" aria-label="Workspace details"><div class="inspector-tabs" role="tablist" aria-label="Workspace details">${['Task', 'Context', 'Files'].map(name => `<button role="tab" aria-selected="${tab === name}" data-tab="${name}" class="${tab === name ? 'active' : ''}">${name}</button>`).join('')}</div><div class="inspector-content" role="tabpanel">${inspectorContent()}</div><footer><span>Oqelira by Flwn</span><span class="footer-note">A little more clarity.</span></footer></aside>`
-    root.querySelectorAll<HTMLButtonElement>('[data-section]').forEach(button => button.addEventListener('click', () => { section = button.dataset.section!;notice='';moreOpen = false; if(section==='Teams'){busy(true);void loadTeams().then(()=>{busy(false);render()}).catch(()=>{error='Could not load teams';busy(false);render()})}; render() }, { signal }))
-    const closeMore = async () => { const menu = root.querySelector<HTMLElement>('.tools-menu'); if (menu) await exitElement(menu); moreOpen = false; render(); root.querySelector<HTMLButtonElement>('[data-action="more"]')?.focus() }
+    root.querySelectorAll<HTMLButtonElement>('[data-section]').forEach(button => button.addEventListener('click', () => enter(button.dataset.section!), { signal }))
+    // The More group is always visible on wide screens; it only behaves as a popover when the toggle is shown (phones).
+    const toggleShown = () => { const toggle = root.querySelector<HTMLElement>('[data-action="more"]'); return !!toggle && getComputedStyle(toggle).display !== 'none' }
+    const closeMore = async () => { const menu = root.querySelector<HTMLElement>('.nav-secondary'); if (menu && toggleShown()) await exitElement(menu); moreOpen = false; render(); root.querySelector<HTMLButtonElement>('[data-action="more"]')?.focus() }
     const closeInspector = async () => { const panel = root.querySelector<HTMLElement>('.inspector'); if (panel) await exitElement(panel); inspectorOpen = false; render() }
-    root.querySelector('[data-action="more"]')?.addEventListener('click', () => { if (moreOpen) { void closeMore(); return }; moreOpen = true; render(); root.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus() }, { signal })
+    root.querySelector('[data-action="more"]')?.addEventListener('click', () => { if (moreOpen) { void closeMore(); return }; moreOpen = true; render(); root.querySelector<HTMLButtonElement>('#more-nav .nav-item')?.focus() }, { signal })
     root.querySelectorAll('[data-action="inspector"]').forEach(button => button.addEventListener('click', () => { if (inspectorOpen) { void closeInspector(); return }; inspectorOpen = true; render() }, { signal }))
     root.querySelector('[data-action="retry"]')?.addEventListener('click', () => { error = ''; if (config?.mode === 'server' && projectId) { void loadProject(projectId) } else { location.reload() } }, { signal })
     root.addEventListener('keydown', event => {
       if (event.key === 'Escape') { if (moreOpen) void closeMore(); if (inspectorOpen) void closeInspector() }
-      if (moreOpen && ['ArrowDown','ArrowUp'].includes(event.key)) { event.preventDefault(); const items = Array.from(root.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')); const current = items.indexOf(document.activeElement as HTMLButtonElement); items[(current + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus() }
     }, { signal })
-    root.addEventListener('click', event => { if (moreOpen && !(event.target as Element).closest('.nav-more')) void closeMore() }, { signal })
+    root.addEventListener('click', event => { if (moreOpen && !(event.target as Element).closest('.sidebar')) void closeMore() }, { signal })
     root.querySelector('#conversation')?.addEventListener('scroll', event => { const node = event.target as HTMLElement; stickToEnd = node.scrollHeight - node.clientHeight - node.scrollTop < 64 }, { signal, passive: true })
     root.querySelectorAll<HTMLButtonElement>('[data-conversation]').forEach(button => button.addEventListener('click', () => { void openConversation(button.dataset.conversation!) }, { signal }))
-    root.querySelector('[data-load-files]')?.addEventListener('click', () => { void loadFiles(directory) }, { signal })
-    root.querySelectorAll<HTMLButtonElement>('[data-open-path]').forEach(button => button.addEventListener('click', () => {
-      if (!projectId || cloudBusy || activeRun) return
-      const path = button.dataset.openPath!
-      if (path.endsWith('/')) { void loadFiles(path.slice(0,-1)); return }
-      busy(true)
-      void api<{output:string}>('file?projectId=' + projectId + '&path=' + encodeURIComponent(path)).then(result => { filePath = path; fileText = result.output; resetForms = true; busy(false); render() }).catch(e => { error = e instanceof Error ? e.message : 'Could not read file'; busy(false); render() })
+    root.querySelectorAll<HTMLButtonElement>('[data-tree-dir]').forEach(button => button.addEventListener('click', () => {
+      const path = button.dataset.treeDir!
+      if (expanded.has(path)) expanded.delete(path); else { expanded.add(path); if (!tree.has(path)) void loadDir(path) }
+      render()
     }, { signal }))
+    root.querySelectorAll<HTMLButtonElement>('[data-tree-file]').forEach(button => button.addEventListener('click', () => { void openFile(button.dataset.treeFile!) }, { signal }))
+    root.querySelectorAll<HTMLButtonElement>('[data-tree-retry]').forEach(button => button.addEventListener('click', () => { void loadDir(button.dataset.treeRetry!) }, { signal }))
+    root.querySelector('[data-tree-refresh]')?.addEventListener('click', () => { const open = ['.', ...expanded]; tree.clear(); open.forEach(path => void loadDir(path)) }, { signal })
+    root.querySelector('[data-edit-file]')?.addEventListener('click', () => { editing = 'edit'; resetForms = true; render(); root.querySelector<HTMLTextAreaElement>('#file-form textarea')?.focus() }, { signal })
+    root.querySelector('[data-new-file]')?.addEventListener('click', () => { editing = 'new'; resetForms = true; render(); root.querySelector<HTMLInputElement>('#file-form input')?.focus() }, { signal })
+    root.querySelector('[data-edit-cancel]')?.addEventListener('click', () => { editing = 'none'; resetForms = true; render() }, { signal })
+    root.querySelectorAll('[data-load-git]').forEach(button => button.addEventListener('click', () => { gitRaw = undefined; gitError = ''; void loadGit() }, { signal }))
+    root.querySelector<HTMLFormElement>('#file-form')?.addEventListener('submit', event => {
+      event.preventDefault(); if (!projectId || cloudBusy || activeRun || projectReadOnly()) return
+      const fields = new FormData(event.target as HTMLFormElement), path = String(fields.get('path') ?? '').trim(), content = String(fields.get('content') ?? '')
+      const id = projectId
+      busy(true)
+      void api('file', { projectId: id, path, content }).then(async () => {
+        busy(false); editing = 'none'; openedFile = { path, text: content }
+        const parent = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '.'
+        if (tree.has(parent)) await loadDir(parent); else render()
+        gitRaw = undefined
+      }).catch(e => { error = e instanceof Error ? e.message : 'Could not save file'; busy(false); render() })
+    }, { signal })
     const teamAction=(operation:()=>Promise<unknown>)=>{if(cloudBusy||activeRun)return;busy(true);error='';notice='';void operation().then(()=>Promise.all([loadTeams(),api<Project[]>('projects').then(value=>{projects=value;if(projectId&&!projects.some(project=>project.id===projectId)){clearConversation();projectId=undefined}})])).then(()=>{busy(false);resetForms=true;render()}).catch(e=>{error=e instanceof Error?e.message:'Team request failed';busy(false);render()})}
     root.querySelector('[data-load-teams]')?.addEventListener('click',()=>teamAction(async()=>{}),{signal})
     root.querySelector<HTMLSelectElement>('[data-team]')?.addEventListener('change',event=>{teamId=(event.target as HTMLSelectElement).value;teamAction(async()=>{})},{signal})
@@ -178,17 +234,6 @@ export function mountWorkspace(root: HTMLElement): () => void {
     root.querySelectorAll<HTMLButtonElement>('[data-remove-member]').forEach(button=>button.addEventListener('click',()=>teamAction(()=>api('auth/organization/remove-member',{organizationId:teamId,memberIdOrEmail:button.dataset.removeMember})),{signal}))
     root.querySelector('[data-verify-account]')?.addEventListener('click',()=>{if(!config?.user?.email)return;void api('auth/send-verification-email',{email:config.user.email,callbackURL:location.origin+'/'}).then(()=>{notice='Verification link requested. Check your email.';render()}).catch(()=>{error='Could not request a verification link';render()})},{signal})
     root.querySelectorAll<HTMLButtonElement>('[data-link-provider]').forEach(button=>button.addEventListener('click',()=>{void socialSignIn(button.dataset.linkProvider as 'google'|'github',true).catch(()=>{error='Could not connect this sign-in method';render()})},{signal}))
-    root.querySelector('[data-load-git]')?.addEventListener('click', () => {
-      if (!projectId || cloudBusy || activeRun) return
-      busy(true)
-      void api<{output:string}>('git?projectId=' + projectId).then(result => { gitDiff = result.output; busy(false); render() }).catch(e => { error = e instanceof Error ? e.message : 'Could not load Git'; busy(false); render() })
-    }, { signal })
-    root.querySelector<HTMLFormElement>('#file-form')?.addEventListener('submit', event => {
-      event.preventDefault(); if (!projectId || cloudBusy || activeRun) return
-      const fields = new FormData(event.target as HTMLFormElement), path = String(fields.get('path') ?? ''), content = String(fields.get('content') ?? '')
-      busy(true)
-      void api('file', { projectId, path, content }).then(async () => { filePath = path; fileText = content; busy(false); await loadFiles(directory) }).catch(e => { error = e instanceof Error ? e.message : 'Could not save file'; busy(false); render() })
-    }, { signal })
     root.querySelector<HTMLSelectElement>('#project')?.addEventListener('change', event => { const id = (event.target as HTMLSelectElement).value; if (id) void loadProject(id) }, { signal })
     root.querySelector('[data-action="logout"]')?.addEventListener('click', () => { activeRun?.abort(); void api('auth/sign-out', {}).then(() => location.reload()).catch(() => { error = 'Could not sign out'; render() }) }, { signal })
     root.querySelector<HTMLFormElement>('#project-form')?.addEventListener('submit', event => {
@@ -243,6 +288,7 @@ export function mountWorkspace(root: HTMLElement): () => void {
     const content = root.querySelector('#conversation')
     content?.scrollTo(0, section === 'Chat' && messages.length && stickToEnd ? content.scrollHeight : changingSection ? 0 : previousScroll)
     if (focused && !activeRun) root.querySelector('textarea')?.focus()
+    else if (focusKey) root.querySelector<HTMLElement>(`[data-fk="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true })
   }
   function approvalContent() {
     if (!pending) return ''
@@ -330,8 +376,8 @@ export function mountWorkspace(root: HTMLElement): () => void {
     return `<div class="page-panel"><p class="eyebrow">A shared place to work</p><h1>Your team.</h1><p>Invite your teammates and choose who can make changes.</p><button data-load-teams>Refresh teams</button><form id="accept-invite"><label>Invitation ID<input name="invitationId" required maxlength="256" value="${escape(invitation)}"></label><button type="submit">Accept invitation</button></form><form id="create-team"><label>Team name<input name="name" required maxlength="120"></label><label>Team handle<input name="slug" required maxlength="120" pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="your-team"></label><button type="submit" ${config?.user?.emailVerified?'':'disabled'}>Create team</button>${!config?.user?.emailVerified?'<p>Team creation requires a verified email address.</p>':''}</form>${teams.length?`<label>Team<select data-team>${teams.map(team=>`<option value="${escape(team.id)}" ${team.id===teamId?'selected':''}>${escape(team.name)} · ${escape(team.role)}</option>`).join('')}</select></label>${admin&&config?.auth?.emailRecovery?'<form id="invite-member"><label>Email<input type="email" name="email" required maxlength="254"></label><label>Role<select name="role"><option value="member">Member</option><option value="viewer">Viewer</option><option value="admin">Admin</option></select></label><button type="submit">Send invitation</button></form>':''}${teamMembers.map(member=>`<div class="info-card"><strong>${escape(member.user.name)}</strong><p>${escape(member.user.email)} · ${escape(member.role)}</p>${admin&&!member.role.split(',').includes('owner')?`<label>Role<select data-member-role="${escape(member.id)}">${['admin','member','viewer'].map(role=>`<option value="${role}" ${member.role===role?'selected':''}>${role}</option>`).join('')}</select></label><button data-remove-member="${escape(member.id)}">Remove member</button>`:''}</div>`).join('')}`:'<p>No teams yet. Create one or accept an invitation.</p>'}</div>`
   }
   function panelContent() {
-    if (config?.mode === 'server' && section === 'Explorer') return `<div class="page-panel"><h1>Project files.</h1><p>Files are inside this project's isolated workspace. Saving writes the text you explicitly submit.</p>${projectId ? `<button data-load-files ${cloudBusy || activeRun ? 'disabled' : ''}>Refresh ${escape(directory)}</button><div class="file-tree">${directory !== '.' ? '<button data-open-path="./">Back to project root</button>' : ''}${listing.map(name => `<button data-open-path="${escape((directory === '.' ? '' : directory + '/') + name)}" ${cloudBusy || activeRun ? 'disabled' : ''}>${escape(name)}</button>`).join('')}</div><form id="file-form"><label>Project-relative file path<input name="path" required maxlength="1000" value="${escape(filePath)}" placeholder="src/main.ts"></label><label>File content<textarea name="content" maxlength="20000" rows="12">${escape(fileText)}</textarea></label><button type="submit" ${cloudBusy || activeRun || projectReadOnly() ? 'disabled' : ''}>Save file to project</button></form>` : '<p>Choose a project first.</p>'}</div>`
-    if (config?.mode === 'server' && section === 'Git') return `<div class="page-panel"><h1>Git changes.</h1><p>Status and diff are read from the isolated project. Ask the agent to initialize Git or create reviewed commits.</p><button data-load-git ${cloudBusy || activeRun || !projectId ? 'disabled' : ''}>Refresh status and diff</button><pre class="git-diff">${escape(gitDiff || 'No Git data loaded yet.')}</pre></div>`
+    if (config?.mode === 'server' && section === 'Explorer') return filesPage({ projectId, tree, expanded, file: openedFile, editing, readOnly: projectReadOnly(), disabled: cloudBusy || !!activeRun })
+    if (config?.mode === 'server' && section === 'Git') return gitPage({ projectId, raw: gitRaw, loading: gitLoading, error: gitError, source: '', disabled: !!activeRun })
     if(section==='Teams')return teamsContent()
     if (section === 'Projects') return `<div class="page-panel"><h1>Your projects.</h1><p>Each project has its own files, conversations and memory.</p><form id="project-form"><label>Project name<input name="name" required maxlength="120"></label><label>Workspace<select name="organizationId"><option value="">Personal</option>${teams.filter(team=>team.role.split(',').some(role=>['owner','admin'].includes(role))).map(team=>`<option value="${escape(team.id)}">${escape(team.name)}</option>`).join('')}</select></label><button type="submit" ${cloudBusy || activeRun ? 'disabled' : ''}>Create project</button></form>${projects.map(p => `<div class="info-card">${escape(p.name)}</div>`).join('')}</div>`
     if (section === 'Memory') return `<div class="page-panel"><h1>Project memory.</h1><p>Notes are recalled in this project's conversations. Never save credentials here.</p>${projectId ? `<form id="memory-form"><label>Project fact<textarea name="content" required maxlength="4000"></textarea></label><button type="submit" ${cloudBusy || activeRun || projectReadOnly() ? 'disabled' : ''}>Save memory</button></form>${memories.map(m => `<div class="info-card memory-card"><p>${escape(m.content)}</p><button data-forget="${escape(m.id)}" ${cloudBusy || activeRun || projectReadOnly() ? 'disabled' : ''}>Remove</button></div>`).join('')}` : '<p>Choose a project first.</p>'}</div>`

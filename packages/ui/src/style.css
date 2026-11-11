@@ -172,7 +172,7 @@ button .icon {
   gap:var(--s-5);
   height:100dvh;
   padding:var(--s-4) var(--s-8);
-  max-width:110rem;
+  max-width:120rem;
   margin:auto
 }
 #app:before {
@@ -188,9 +188,18 @@ button .icon {
   grid-row:1/-1;
   display:flex;
   flex-direction:column;
-  gap:var(--s-8);
+  gap:var(--s-5);
   min-height:0;
-  padding:var(--s-4) 0
+  padding:var(--s-4) 0;
+  overflow:hidden auto;
+  scrollbar-width:thin
+}
+.sidebar>* {
+  flex-shrink:0
+}
+.sidebar>.saved-sessions {
+  flex-shrink:1;
+  min-height:4rem
 }
 .brand {
   display:inline-flex;
@@ -226,7 +235,7 @@ button .icon {
   justify-content:flex-start;
   border-color:transparent;
   background:transparent;
-  padding:var(--s-3);
+  padding:var(--s-2) var(--s-3);
   font-size:.875rem;
   font-weight:600
 }
@@ -242,28 +251,16 @@ button .icon {
   width:1rem;
   height:1rem
 }
-.nav-more {
-  position:relative
+.nav-label {
+  padding:0 var(--s-3);
+  margin-bottom:var(--s-1)
 }
-.tools-menu {
-  position:absolute;
-  left:0;
-  top:calc(100% + var(--s-2));
-  width:100%;
-  z-index:10;
-  background:var(--white);
-  padding:var(--s-2);
-  border:var(--line) solid var(--border);
-  border-radius:var(--r);
-  box-shadow:var(--shadow);
-  animation:enter var(--dur) var(--ease-out)
+.nav-more-toggle {
+  display:none
 }
-.tools-menu button {
-  border:0;
-  width:100%;
-  justify-content:flex-start;
-  font-size:.75rem;
-  padding:var(--s-3)
+.nav-secondary {
+  padding-top:var(--s-3);
+  border-top:var(--line) solid var(--border)
 }
 .session,.saved-sessions button {
   width:100%;
@@ -1104,6 +1101,7 @@ details>p {
 }
 @media(min-width:100rem) {
   #app {
+    grid-template-columns:15rem minmax(0,1fr) 22rem;
     padding-inline:var(--s-16)
   }
 }
@@ -1125,6 +1123,7 @@ details>p {
     right:var(--s-4);
     top:var(--s-4);
     bottom:var(--s-4);
+    max-height:calc(100dvh - var(--s-8));
     width:min(22rem,calc(100% - 2rem));
     z-index:40;
     box-shadow:var(--shadow);
@@ -1151,38 +1150,61 @@ details>p {
   #app {
     grid-template-columns:minmax(0,1fr);
     grid-template-rows:auto minmax(0,1fr);
-    padding:var(--s-4) var(--s-4) 6rem;
+    padding:var(--s-4) var(--s-4) calc(6rem + env(safe-area-inset-bottom));
     gap:var(--s-4)
   }
   .sidebar {
     display:block;
     position:fixed;
-    bottom:var(--s-2);
+    bottom:calc(var(--s-2) + env(safe-area-inset-bottom));
     left:var(--s-2);
     right:var(--s-2);
     padding:var(--s-2);
     background:var(--white);
     border:var(--line) solid var(--border);
     border-radius:var(--r);
+    overflow:visible;
     z-index:30
   }
-  .sidebar>*:not(nav) {
+  .sidebar>*:not(nav),.nav-label {
     display:none
   }
-  .sidebar nav {
+  .sidebar .nav-primary {
     display:flex;
     justify-content:space-around;
     gap:var(--s-1)
+  }
+  .nav-primary>.nav-item {
+    flex:1;
+    min-width:0
+  }
+  .nav-more-toggle {
+    display:inline-flex
+  }
+  .sidebar .nav-secondary {
+    display:none
+  }
+  .sidebar.more-open .nav-secondary {
+    display:grid;
+    grid-template-columns:repeat(3,minmax(0,1fr));
+    gap:var(--s-1);
+    position:absolute;
+    left:0;
+    right:0;
+    bottom:calc(100% + var(--s-2));
+    padding:var(--s-2);
+    background:var(--white);
+    border:var(--line) solid var(--border);
+    border-radius:var(--r);
+    box-shadow:var(--shadow);
+    animation:enter var(--dur) var(--ease-out)
   }
   .nav-item {
     flex-direction:column;
     gap:var(--s-1);
     padding:var(--s-2);
-    font-size:.625rem
-  }
-  .sidebar nav>.nav-item,.nav-more {
-    flex:1;
-    min-width:0
+    min-height:3rem;
+    font-size:.75rem
   }
   .nav-item .icon {
     width:1.25rem;
@@ -1190,13 +1212,6 @@ details>p {
   }
   .nav-item .chevron {
     display:none
-  }
-  .tools-menu {
-    top:auto;
-    bottom:calc(100% + var(--s-4));
-    left:auto;
-    right:0;
-    width:12rem
   }
   .topbar {
     grid-column:1;
@@ -1285,7 +1300,7 @@ details>p {
     max-height:18rem
   }
   .inspector-open .inspector {
-    bottom:6rem
+    bottom:calc(6rem + env(safe-area-inset-bottom))
   }
   .auth-page {
     padding:var(--s-4) 0;
@@ -1320,7 +1335,7 @@ details>p {
     transition-duration:var(--dur-fast)!important;
     transition-delay:0ms!important
   }
-  .tools-menu,.tool-body,.approval-card,.auth-card,.notice.error,.inspector-open .inspector {
+  .more-open .nav-secondary,.tool-body,.approval-card,.auth-card,.notice.error,.inspector-open .inspector {
     animation-name:fade-in;
     animation-duration:var(--dur-fast)
   }
@@ -1471,3 +1486,319 @@ h1 {
 }
 .social-button{display:flex;width:100%;margin-top:var(--s-3)}
 .auth-card .text-button{display:block}
+/* Wide pages: files, git, connections. Content keeps a readable width and centres on ultrawide screens. */
+.page-wide {
+  max-width:var(--max);
+  margin:auto;
+  display:grid;
+  gap:var(--s-6)
+}
+.page-title .eyebrow {
+  margin-bottom:var(--s-2)
+}
+.page-title>p:not(.eyebrow) {
+  margin-top:var(--s-3);
+  max-width:var(--measure);
+  font-size:.875rem;
+  color:var(--ink-soft)
+}
+.page-actions,.form-actions {
+  display:flex;
+  flex-wrap:wrap;
+  gap:var(--s-3)
+}
+.files-layout {
+  display:grid;
+  grid-template-columns:minmax(14rem,19rem) minmax(0,1fr);
+  gap:var(--s-5);
+  align-items:start
+}
+.files-tree,.files-viewer {
+  min-width:0;
+  border:var(--line) solid var(--border);
+  border-radius:var(--r);
+  background:var(--white)
+}
+.files-tree {
+  display:flex;
+  flex-direction:column
+}
+.files-tree-head {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:var(--s-2);
+  padding:var(--s-2) var(--s-3) var(--s-2) var(--s-4);
+  border-bottom:var(--line) solid var(--border);
+  font-size:.875rem
+}
+.head-actions {
+  display:flex;
+  gap:var(--s-1)
+}
+.head-actions .icon-button {
+  border:0;
+  padding:var(--s-2)
+}
+.tree {
+  list-style:none;
+  margin:0;
+  padding:0
+}
+.tree.root {
+  padding:var(--s-2);
+  overflow:auto;
+  max-height:min(34rem,60dvh);
+  scrollbar-width:thin
+}
+.tree .tree {
+  padding-left:var(--s-4)
+}
+.tree-row {
+  width:100%;
+  justify-content:flex-start;
+  gap:var(--s-2);
+  border:0;
+  background:transparent;
+  padding:var(--s-2);
+  font-size:.75rem;
+  text-align:left
+}
+.tree-row>span {
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap
+}
+.tree-row[aria-current=true] {
+  background:var(--pastel-gold)
+}
+.tree-row[aria-expanded=true]>.chevron {
+  transform:rotate(90deg)
+}
+.tree-note {
+  display:grid;
+  justify-items:start;
+  gap:var(--s-2);
+  padding:var(--s-2);
+  font-size:.75rem;
+  color:var(--ink-soft)
+}
+.tree-note.error {
+  background:var(--pastel-salmon);
+  color:var(--ink);
+  border-radius:var(--r-sm)
+}
+.tree-note .skeleton-line {
+  width:100%;
+  flex:none
+}
+.files-viewer {
+  padding:var(--s-5);
+  min-height:20rem
+}
+.viewer-head {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:var(--s-4);
+  margin-bottom:var(--s-4)
+}
+.viewer-head>div {
+  min-width:0
+}
+.viewer-head h2 {
+  margin-top:var(--s-1);
+  font-size:1rem;
+  overflow-wrap:anywhere
+}
+.sep {
+  padding:0 var(--s-1);
+  color:var(--ink-soft)
+}
+.viewer-empty {
+  display:grid;
+  justify-items:center;
+  align-content:center;
+  min-height:16rem
+}
+.code-view,.git-diff {
+  white-space:pre;
+  overflow:auto;
+  max-height:min(40rem,65dvh);
+  margin:0;
+  font-size:.75rem
+}
+.code-line {
+  display:block
+}
+.code-line:before {
+  content:attr(data-n);
+  display:inline-block;
+  width:3rem;
+  padding-right:var(--s-3);
+  text-align:right;
+  color:var(--ink-soft);
+  user-select:none
+}
+.editor {
+  display:grid;
+  gap:var(--s-4);
+  margin:0
+}
+.editor label {
+  display:grid;
+  gap:var(--s-2);
+  font-size:.75rem;
+  font-weight:600
+}
+.editor textarea {
+  font-family:'JetBrains Mono Variable',monospace;
+  font-size:.75rem;
+  min-height:16rem
+}
+.save-button {
+  background:var(--pastel-gold)
+}
+.git-summary {
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(14rem,1fr));
+  gap:var(--s-4)
+}
+.git-card {
+  display:grid;
+  align-content:start;
+  gap:var(--s-2);
+  padding:var(--s-5);
+  border-radius:var(--r);
+  background:var(--pastel-blue);
+  box-shadow:var(--shadow);
+  min-width:0
+}
+.git-card:nth-child(2) {
+  background:var(--pastel-lavender)
+}
+.git-card>strong {
+  font-size:1.125rem;
+  overflow-wrap:anywhere
+}
+.git-card small {
+  color:var(--ink-72);
+  overflow-wrap:anywhere
+}
+.branch {
+  display:flex;
+  align-items:center;
+  gap:var(--s-2)
+}
+.git-files h2,.git-diff-section h2 {
+  font-size:1.125rem;
+  margin-bottom:var(--s-3)
+}
+.git-files ul {
+  list-style:none;
+  margin:0;
+  padding:0;
+  display:grid;
+  gap:var(--s-2)
+}
+.git-files li {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:var(--s-3);
+  padding:var(--s-2) var(--s-3);
+  border:var(--line) solid var(--border);
+  border-radius:var(--r);
+  background:var(--white)
+}
+.git-files code {
+  font-size:.75rem;
+  overflow-wrap:anywhere;
+  min-width:0
+}
+.git-files .chip {
+  background:var(--pastel-gold)
+}
+.git-diff {
+  padding:var(--s-4);
+  background:var(--white);
+  border:var(--line) solid var(--border);
+  border-radius:var(--r)
+}
+.diff-add {
+  background:var(--pastel-green)
+}
+.diff-del {
+  background:var(--pastel-salmon)
+}
+.diff-hunk {
+  background:var(--pastel-lavender)
+}
+.diff-meta {
+  color:var(--ink-soft)
+}
+.git-diff>span {
+  display:block
+}
+.git-files,.git-diff-section {
+  min-width:0
+}
+@media(hover:hover) {
+  .tree-row:hover:not(:disabled) {
+    transform:none;
+    background:color-mix(in srgb,var(--ink) 8%,var(--white))
+  }
+  .tree-row[aria-current=true]:hover:not(:disabled) {
+    background:var(--pastel-gold)
+  }
+}
+@media(max-width:60rem) {
+  .files-layout {
+    grid-template-columns:minmax(0,1fr)
+  }
+  .tree.root {
+    max-height:14rem
+  }
+}
+/* Short windows: the sidebar scrolls instead of squeezing its groups. */
+@media(max-height:44rem) and (min-width:48.0625rem) {
+  .sidebar {
+    gap:var(--s-3)
+  }
+  .recent {
+    display:none
+  }
+}
+/* Touch: 44px minimum targets and 16px form text (smaller text makes iOS zoom the page on focus). */
+@media(max-width:48rem),(pointer:coarse) {
+  button,select,input,summary {
+    min-height:2.75rem
+  }
+  .icon-button,.user-badge,.tabbar .icon-button,.head-actions .icon-button,.top-actions .icon-button {
+    min-width:2.75rem;
+    min-height:2.75rem
+  }
+  .composer textarea,input,textarea,select {
+    font-size:1rem
+  }
+}
+@media(max-width:48rem) {
+  .top-actions select {
+    font-size:1rem;
+    max-width:7rem
+  }
+  .workspace-switch select {
+    max-width:100%
+  }
+  .page-wide {
+    gap:var(--s-5)
+  }
+  .files-viewer {
+    padding:var(--s-4)
+  }
+  .page-title h1 {
+    font-size:2rem
+  }
+}
