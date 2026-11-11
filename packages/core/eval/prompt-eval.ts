@@ -3,7 +3,7 @@
  * Uses the real agent loop and whatever ModelProvider the caller passes in. No model names are hardcoded here.
  * Each attempt uses a fresh isolated runner workspace, disposed afterwards.
  */
-import { RunnerWorkspace, type EvalWorkspace } from './runner-workspace.js'
+import type { EvalWorkspace } from './runner-workspace.js'
 import { runAgent } from '../src/agent/loop.js'
 import type { ApprovalRequest, Risk } from '../src/permissions.js'
 import type { ModelConfig } from '../src/providers/registry.js'
@@ -329,8 +329,8 @@ export interface PromptEvalOptions {
   prompts: Record<string, string>
   tasks?: readonly EvalTask[]
   provider: (model: ModelConfig) => ModelProvider
-  /** Test seam: production callers omit this to require the HTTPS gVisor runner. */
-  workspace?: () => EvalWorkspace
+  /** Live callers supply RunnerWorkspace; only controlled unit tests supply local fixtures. */
+  workspace: () => EvalWorkspace
   maxSteps?: number
   maxOutputTokens?: number
   /** How many times to run each model/prompt/task cell (default 1). */
@@ -370,10 +370,11 @@ async function runOne(opts: Omit<PromptEvalOptions, 'models' | 'prompts' | 'task
 }
 
 async function runAttempt(opts: Omit<PromptEvalOptions, 'models' | 'prompts' | 'tasks' | 'repeats' | 'concurrency'> & { model: ModelConfig; system: string; task: EvalTask }): Promise<Omit<EvalRun, 'model' | 'prompt' | 'task' | 'rep'>> {
-  const cwd = opts.workspace?.() ?? RunnerWorkspace.fromEnv()
+  const cwd = opts.workspace()
+  let outcome: Omit<EvalRun, 'model' | 'prompt' | 'task' | 'rep'>
   try {
     await cwd.initialize()
-    for (const [rel, content] of Object.entries(opts.task.files)) await cwd.writeText(rel, content)
+    await cwd.reset(opts.task.files)
     const toolCalls: string[] = []
     const approvals: RunRecord['approvals'] = []
     const result = await runAgent({
@@ -395,13 +396,17 @@ async function runAttempt(opts: Omit<PromptEvalOptions, 'models' | 'prompts' | '
       afterTool: async (_call, _tool, result) => { await opts.task.afterTool?.(cwd, result.name) },
     })
     const check = await opts.task.check(cwd, { text: result.text, toolCalls, approvals })
-    return { ok: check.ok, detail: check.detail, steps: result.steps }
+    outcome = { ok: check.ok, detail: check.detail, steps: result.steps }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    return { ok: false, detail: `run error: ${message.slice(0, 200)}`, steps: 0 }
+    outcome = { ok: false, detail: `run error: ${message.slice(0, 200)}`, steps: 0 }
   } finally {
-    await cwd.dispose()
+    try { await cwd.dispose() } catch (error) {
+      const reason = error instanceof Error ? error.message.slice(0, 200) : 'unknown cleanup error'
+      outcome = { ok: false, detail: `cleanup error: isolated fixture cleanup failed: ${reason}`, steps: 0 }
+    }
   }
+  return outcome
 }
 
 /** Markdown table: one row per task, one column per model and prompt, then pass totals. */

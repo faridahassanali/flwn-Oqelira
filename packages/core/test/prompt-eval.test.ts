@@ -258,89 +258,102 @@ test('results table lists every model and prompt, pass totals, and failure detai
 })
 
 
-test('runner evaluation sends fixtures, model tools and checks remotely, then deletes the workspace', async (t) => {
-  const files = new Map<string, string>()
-  const projects = new Set<string>()
-  const commands: string[] = []
-  let deleted = 0
+/** A protocol fake: no fixture source is executed in these transport tests. */
+function remoteRunner(t: import('node:test').TestContext, kernel = 'Linux version 4.19.0-gvisor') {
+  const projects = new Map<string, Map<string, string>>()
+  const events: { project: string; name: string; input: Record<string, string> }[] = []
+  const failure = { read: false, reset: false, maskedMissing: false }
   t.mock.method(globalThis, 'fetch', async (url: URL, init?: RequestInit) => {
     assert.equal(url.origin, 'https://runner.example')
+    assert.equal(url.pathname, '/execute', 'no new endpoint or volume-deletion API is needed')
+    assert.equal(init?.method, 'POST')
     assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${'x'.repeat(32)}`)
     assert.equal(init?.redirect, 'error')
-    const response = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'x-oqelira-runtime': 'runsc' } })
-    if (url.pathname === '/runtime') return response({ runtime: 'runsc' })
-    if (init?.method === 'DELETE') { deleted++; assert.ok(projects.has(url.pathname.slice('/projects/'.length))); return response({ ok: true }) }
-    assert.equal(url.pathname, '/execute')
-    const request = JSON.parse(init?.body as string)
-    projects.add(request.project)
-    const input = request.input
-    if (request.name === 'write_file') { files.set(input.path, input.content); return response({ output: 'wrote' }) }
-    if (request.name === 'read_file') return files.has(input.path) ? response({ output: files.get(input.path) }) : response({ error: 'ENOENT' })
-    if (request.name === 'run_command') { commands.push(input.command); return response({ output: 'ok\n[exit code 0]' }) }
+    const { project, name, input } = JSON.parse(init?.body as string)
+    events.push({ project, name, input })
+    assert.match(project, /^e7a1e7a1-e7a1-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    const files = projects.get(project) ?? new Map<string, string>()
+    projects.set(project, files)
+    const response = (body: unknown) => new Response(JSON.stringify(body))
+    if (name === 'run_command') {
+      if (input.command === 'cat /proc/version') return response({ output: `${kernel}\n\n[exit code 0]` })
+      if (input.command.includes('fs.accessSync')) {
+        const file = input.command.match(/'([^']*)'$/)?.[1]
+        return response({ output: `${file === '.' || files.has(file) ? 'true' : 'false'}\n\n[exit code 0]` })
+      }
+      if (input.command.startsWith('node -e ')) {
+        if (failure.reset) return response({ output: '\n[exit code 1]' })
+        files.clear(); return response({ output: '\n[exit code 0]' })
+      }
+      return response({ output: '\n[exit code 0]' })
+    }
+    if (name === 'write_file') { files.set(input.path, input.content); return response({ output: 'wrote' }) }
+    if (failure.read) return failure.maskedMissing ? new Response('{}', { status: 503 }) : response({ error: 'runner disconnected' })
+    if (name === 'read_file') return files.has(input.path) ? response({ output: files.get(input.path) }) : failure.maskedMissing ? new Response('{}', { status: 503 }) : response({ error: 'ENOENT' })
+    if (name === 'list_dir') return response({ output: [...files.keys()].join('\n') })
     throw new Error('unexpected remote tool')
   })
+  return { projects, events, failure }
+}
+const isolatedWorkspace = () => new RunnerWorkspace('https://runner.example', 'x'.repeat(32))
+
+test('runner evaluation prepares fixtures, runs tools and checks remotely, then empties the workspace', async (t) => {
+  const remote = remoteRunner(t)
   const runs = await runPromptEval({
-    workspace: () => new RunnerWorkspace('https://runner.example', 'x'.repeat(32)),
-    models: models.slice(0, 1), prompts: { p: 'system' }, tasks: [task('create-file')],
+    workspace: isolatedWorkspace, models: models.slice(0, 1), prompts: { p: 'system' }, tasks: [task('create-file')],
     provider: () => scripted(() => [{ type: 'tool-call', call: { id: 'w', name: 'write_file', input: { path: 'notes.txt', content: 'hello oqelira' } } }]),
   })
   assert.equal(runs[0]?.ok, true, runs[0]?.detail)
-  assert.equal(deleted, 1)
-  assert.equal(projects.size, 1)
-  const workspace = new RunnerWorkspace('https://runner.example', 'x'.repeat(32))
-  await workspace.writeText('fixture.mjs', 'trusted fixture')
+  assert.equal(remote.projects.size, 1)
+  assert.ok([...remote.projects.values()].every(files => files.size === 0))
+  assert.deepEqual(remote.events.map(e => e.name), ['run_command', 'run_command', 'write_file', 'read_file', 'run_command'])
+  const workspace = isolatedWorkspace()
+  await workspace.reset({ 'fixture.mjs': 'trusted fixture', '.hidden': 'old state' })
+  assert.equal(await workspace.exists('.hidden'), true)
+  assert.deepEqual(await workspace.listing('.'), ['fixture.mjs', '.hidden'])
+  await workspace.reset({ 'fresh.txt': 'new fixture' })
+  assert.equal(await workspace.exists('.hidden'), false)
+  assert.equal(await workspace.readText('fresh.txt'), 'new fixture')
   assert.equal(await workspace.testPasses("fixture'; touch owned; '.mjs"), true)
-  assert.equal(commands[0], "node --test -- 'fixture'\"'\"'; touch owned; '\"'\"'.mjs'")
+  const command = remote.events.find(e => e.input.command?.startsWith('node --test'))?.input.command
+  assert.equal(command, "node --test -- 'fixture'\"'\"'; touch owned; '\"'\"'.mjs'")
   await workspace.dispose()
-  assert.equal(projects.size, 2)
-  assert.equal(deleted, 2)
+  assert.equal(remote.projects.size, 2)
+  assert.ok([...remote.projects.values()].every(files => files.size === 0))
 })
 
-test('runner rejects missing configuration, unsafe URLs, and non-gVisor runtime before execution', async (t) => {
+test('runner rejects unsafe configuration and non-gVisor kernels before fixture or model code', async (t) => {
   assert.throws(() => new RunnerWorkspace('', ''), /Set PROMPT_EVAL_RUNNER/)
   for (const url of ['http://runner.example', 'https://user:password@runner.example', 'https://runner.example?token=x']) {
     assert.throws(() => new RunnerWorkspace(url, 'x'.repeat(32)), /clean HTTPS/)
   }
   assert.throws(() => new RunnerWorkspace('https://runner.example', 'short'), /too short/)
-  const requests: string[] = []
-  t.mock.method(globalThis, 'fetch', async (url: URL) => {
-    requests.push(url.pathname)
-    return new Response('{}', { headers: { 'x-oqelira-runtime': 'runc' } })
-  })
-  const workspace = new RunnerWorkspace('https://runner.example', 'x'.repeat(32))
-  await assert.rejects(workspace.writeText('fixture.mjs', 'bad'), /requires a gVisor/)
+  const remote = remoteRunner(t, 'Linux version 6.8.0-generic')
+  const workspace = isolatedWorkspace()
+  await assert.rejects(workspace.reset({ 'fixture.mjs': 'bad' }), /requires a gVisor/)
   await workspace.dispose()
-  assert.deepEqual(requests, ['/runtime'])
+  assert.deepEqual(remote.events.map(e => e.input.command), ['cat /proc/version'])
 })
 
-test('runner transport and grading errors fail closed and still clean up', async (t) => {
-  let deletes = 0
-  t.mock.method(globalThis, 'fetch', async (url: URL, init?: RequestInit) => {
-    if (init?.method === 'DELETE') { deletes++; return new Response('{}') }
-    if (url.pathname === '/runtime') return new Response('{}', { headers: { 'x-oqelira-runtime': 'runsc' } })
-    return new Response(JSON.stringify({ error: 'runner disconnected' }), { headers: { 'x-oqelira-runtime': 'runsc' } })
-  })
-  const workspace = new RunnerWorkspace('https://runner.example', 'x'.repeat(32))
+test('runner grading and reset failures fail closed, without swallowing transport errors', async (t) => {
+  const remote = remoteRunner(t)
+  const workspace = isolatedWorkspace()
+  await workspace.reset({ 'fixture.txt': 'x' })
+  remote.failure.read = true
   await assert.rejects(workspace.readText('missing'), /runner disconnected/)
   await assert.rejects(workspace.listing('src'), /runner disconnected/)
+  remote.failure.reset = true
+  await assert.rejects(workspace.dispose(), /fixture reset failed/)
+  remote.failure.reset = false
   await workspace.dispose()
-  assert.equal(deletes, 1)
+  assert.ok([...remote.projects.values()].every(files => files.size === 0))
 })
 
-
-test('a retry gets a fresh remote project and cleans both attempts', async (t) => {
-  const projects = new Set<string>(), deleted = new Set<string>()
-  t.mock.method(globalThis, 'fetch', async (url: URL, init?: RequestInit) => {
-    const respond = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'x-oqelira-runtime': 'runsc' } })
-    if (url.pathname === '/runtime') return respond({})
-    if (init?.method === 'DELETE') { deleted.add(url.pathname.slice('/projects/'.length)); return respond({}) }
-    const { project, name } = JSON.parse(init?.body as string)
-    projects.add(project)
-    return respond({ output: name === 'read_file' ? 'hello oqelira' : 'wrote' })
-  })
+test('a retry gets a fresh remote project and empties both attempts', async (t) => {
+  const remote = remoteRunner(t)
   let attempt = 0
   const runs = await runPromptEval({
-    workspace: () => new RunnerWorkspace('https://runner.example', 'x'.repeat(32)),
+    workspace: isolatedWorkspace,
     models: models.slice(0, 1), prompts: { p: 'system' }, tasks: [task('create-file')],
     provider: () => {
       const fail = attempt++ === 0
@@ -357,6 +370,50 @@ test('a retry gets a fresh remote project and cleans both attempts', async (t) =
     },
   })
   assert.equal(runs[0]?.ok, true, runs[0]?.detail)
-  assert.equal(projects.size, 2)
-  assert.deepEqual(deleted, projects)
+  assert.equal(remote.projects.size, 2)
+  assert.ok([...remote.projects.values()].every(files => files.size === 0))
+})
+
+
+test('cleanup failure fails the cell without retrying or discarding the comparison', async (t) => {
+  const remote = remoteRunner(t)
+  const runs = await runPromptEval({
+    workspace: isolatedWorkspace, models: models.slice(0, 1), prompts: { p: 'system' },
+    tasks: [task('create-file')],
+    provider: () => {
+      remote.failure.reset = true
+      return scripted(() => null)
+    },
+  })
+  assert.equal(runs.length, 1)
+  assert.equal(runs[0]?.ok, false)
+  assert.match(runs[0]?.detail ?? '', /fixture cleanup failed/)
+  assert.equal(remote.projects.size, 1, 'a retry must not hide a fixture that failed cleanup')
+})
+
+
+test('parallel live attempts use distinct remote fixture identities and leave them empty', async (t) => {
+  const remote = remoteRunner(t)
+  const runs = await runPromptEval({
+    workspace: isolatedWorkspace, models, prompts: { baseline: 'a', current: 'b' },
+    tasks: [task('create-file')], repeats: 2, concurrency: 4,
+    provider: () => scripted(() => [{ type: 'tool-call', call: { id: 'w', name: 'write_file', input: { path: 'notes.txt', content: 'hello oqelira' } } }]),
+  })
+  assert.equal(runs.length, 8)
+  assert.ok(runs.every(run => run.ok))
+  assert.equal(remote.projects.size, 8)
+  assert.ok([...remote.projects.values()].every(files => files.size === 0))
+})
+
+
+test('existing runner masked ENOENT is checked remotely while a real read failure stays an error', async (t) => {
+  const remote = remoteRunner(t)
+  remote.failure.maskedMissing = true
+  const workspace = isolatedWorkspace()
+  await workspace.reset({ 'present.txt': 'keep' })
+  assert.equal(await workspace.readText('missing.txt'), null)
+  assert.equal(await workspace.exists('missing.txt'), false)
+  remote.failure.read = true
+  await assert.rejects(workspace.readText('present.txt'), /HTTP 503/)
+  await workspace.dispose()
 })

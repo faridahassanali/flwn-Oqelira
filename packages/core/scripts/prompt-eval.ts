@@ -41,20 +41,31 @@ if (!models.length) {
 }
 
 const set = process.env.PROMPT_EVAL_SET ?? 'easy'
+if (!['easy', 'hard', 'all'].includes(set)) throw new Error('PROMPT_EVAL_SET must be easy, hard, or all')
 const tasks = set === 'hard' ? HARD_TASKS : set === 'all' ? [...TASKS, ...HARD_TASKS] : TASKS
 const only = process.env.PROMPT_EVAL_TASKS?.split(',').map(s => s.trim()).filter(Boolean)
+
+const selectedTasks = tasks.filter(t => !only?.length || only.includes(t.id))
+if (!selectedTasks.length) throw new Error('No tasks matched PROMPT_EVAL_TASKS')
+const repeats = Number(process.env.PROMPT_EVAL_REPEATS ?? 1)
+const concurrency = Number(process.env.PROMPT_EVAL_CONCURRENCY ?? 1)
+if (!Number.isSafeInteger(repeats) || repeats < 1) throw new Error('PROMPT_EVAL_REPEATS must be a positive integer')
+if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 8) throw new Error('PROMPT_EVAL_CONCURRENCY must be between 1 and 8')
 
 const make = createFoundry(config)
 const runs = await runPromptEval({
   models,
+  workspace: () => RunnerWorkspace.fromEnv(),
   prompts: { baseline: BASELINE_SYSTEM, current: DEFAULT_SYSTEM },
-  tasks: tasks.filter(t => !only?.length || only.includes(t.id)),
-  repeats: Number(process.env.PROMPT_EVAL_REPEATS ?? 1),
-  concurrency: Number(process.env.PROMPT_EVAL_CONCURRENCY ?? 1),
+  tasks: selectedTasks,
+  repeats,
+  concurrency,
   provider: make,
   onRun: r => console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.model} / ${r.prompt} / ${r.task} #${r.rep}  (${r.steps} steps)  ${r.detail}`),
 })
 
-const body = renderResults(runs, { date: new Date().toISOString().slice(0, 10), mode: 'Foundry deployments from config' })
+const body = renderResults(runs, { date: new Date().toISOString().slice(0, 10), mode: 'Foundry deployments from config; fixtures and checks in gVisor' })
 console.log('\n' + body)
 if (process.env.PROMPT_EVAL_OUT) await fs.writeFile(process.env.PROMPT_EVAL_OUT, body, 'utf8')
+
+if (runs.some(run => !run.ok)) process.exitCode = 1

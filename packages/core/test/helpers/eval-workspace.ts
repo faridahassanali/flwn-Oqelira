@@ -11,6 +11,11 @@ export function localWorkspace(): EvalWorkspace {
   const root = fs.mkdtemp(path.join(os.tmpdir(), 'prompt-eval-unit-'))
   return {
     async initialize() {},
+    async reset(files = {}) {
+      const dir = await root
+      for (const name of await fs.readdir(dir)) await fs.rm(path.join(dir, name), { recursive: true, force: true })
+      for (const [file, content] of Object.entries(files)) await this.writeText(file, content)
+    },
     tools: builtinTools.map(tool => ({ ...tool, run: async (input, ctx) => tool.run(input, { ...ctx, cwd: await root }) })),
     async writeText(file, content) { const target = path.join(await root, file); await fs.mkdir(path.dirname(target), { recursive: true }); await fs.writeFile(target, content) },
     async readText(file) { return fs.readFile(path.join(await root, file), 'utf8').catch(() => null) },
