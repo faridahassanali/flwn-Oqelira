@@ -226,8 +226,10 @@ export function createCloudServer(opts: Options) {
     } catch { status = run.controller.signal.aborted ? 'interrupted' : 'failed'; send({ type: 'error', message: status === 'interrupted' ? 'Run interrupted. Approved changes remain; resume after reviewing the workspace.' : 'Run failed. Your conversation is saved; check service health before retrying.' }) }
     finally {
       clearInterval(heartbeat); clearTimeout(deadline); cancel()
-      try { await opts.store.audit(owner, conversationId, runId, status,null,null,user); await opts.store.release(owner, conversationId, runId, status) } catch { /* lease expires if database is unavailable */ }
+      // A reconnecting replica tails durable events. Publish the terminal event before releasing the
+      // lease, otherwise it can observe an inactive run and close its stream before `done` is stored.
       if(run.journal)await run.journal.finish()
+      try { await opts.store.audit(owner, conversationId, runId, status,null,null,user); await opts.store.release(owner, conversationId, runId, status) } catch { /* lease expires if database is unavailable */ }
       runs.delete(runId);res.end()
     }
   }
