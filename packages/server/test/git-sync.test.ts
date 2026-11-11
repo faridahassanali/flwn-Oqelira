@@ -1,10 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync, spawn } from 'node:child_process'
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, statSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { GitError, GitSync, dockerGitArgs, validBranch, validRepo } from '../src/git-sync.js'
+import { GitError, GitSync, ProjectLocks, dockerGitArgs, validBranch, validRepo } from '../src/git-sync.js'
 import type { VolumeExec } from '../src/git-sync.js'
 
 const P = '11111111-1111-4111-8111-111111111111'
@@ -140,9 +140,62 @@ test('one job per project (409) and global cap (429)', async () => {
 })
 
 test('docker args: no network, no token slot, bounded', () => {
-  const a = dockerGitArgs(P, '22222222-2222-4222-8222-222222222222', 'img', 'runsc', 'true', { BR: 'main' }, '/tmp/s')
+  const a = dockerGitArgs(P, '22222222-2222-4222-8222-222222222222', 'img', 'runsc', 'true', { BR: 'main' }, true)
   assert.ok(a.join(' ').includes('--network none --read-only --cap-drop ALL')); assert.ok(a.includes('1000:1000'))
-  assert.ok(a.includes('type=bind,source=/tmp/s,target=/src,readonly'))
+  assert.ok(a.includes('-i') && a.includes('TAR=1')); assert.equal(a.join(' ').includes('type=bind'), false) // streamed, no host path mounted
   assert.equal(a.join(' ').includes('--privileged'), false)
   assert.throws(() => dockerGitArgs('x', 'y', 'img', undefined, '', {}))
+})
+
+test('host temp dir holding the bare repo stays 0700', async () => {
+  const f = fixture(), ws = mk(), real = fakeExec(ws), modes: number[] = []
+  const g = new GitSync({ baseUrl: f.base, exec: async (p, s, e, src, sig) => { if (src) modes.push(statSync(path.dirname(src)).mode & 0o777); return real(p, s, e, src, sig) } })
+  await g.handle(req())
+  assert.deepEqual(modes, [0o700])
+})
+
+test('forged volume output is rejected on the host', async () => {
+  const f = fixture(), ws = mk(), real = fakeExec(ws)
+  const forge = (fn: (script: string, out: string) => string) => new GitSync({ baseUrl: f.base, exec: async (p, s, e, src, sig) => fn(s, await real(p, s, e, src, sig)) })
+  // clone reports a different commit
+  assert.equal(await code(forge((s, o) => s.includes('g init') ? `${'a'.repeat(40)}\n1\n` : o).handle(req())), 502)
+  assert.deepEqual(readdirSync(ws), [])
+  await new GitSync({ baseUrl: f.base, exec: real }).handle(req())
+  const head = sh(ws, 'rev-parse', 'HEAD')
+  const bad = ['repo\nmain\n--output=/x\nclean\n1\n', 'repo\n--evil\n' + head + '\nclean\n1\n', `repo\nmain\n${head}\nclean\n-5\n`, `repo\nmain\n${head}\nmaybe\n1\n`, `repo\nmain\n${head}\nclean\n1\nextra\n`]
+  for (const b of bad) assert.equal(await code(forge(s => s.includes('echo repo') ? b : 'empty').handle(req({ action: 'pull' }))), 502, b)
+  f.push('b.txt', 'x')
+  assert.equal(await code(forge((s, o) => s.includes('merge --ff-only') || s.includes('ff-only') ? '99999999999\n' + head + '\n1\n' : o).handle(req({ action: 'pull' }))), 502)
+})
+
+test('pull refuses a project whose .git/config can run code', async () => {
+  const { f, ws, g } = setup()
+  await g.handle(req())
+  f.push('b.txt', 'x')
+  for (const extra of ['[core]\n\tfsmonitor = /tmp/x\n', '[filter "x"]\n\tclean = /tmp/x\n', '[include]\n\tpath = /tmp/x\n', '[diff "d"]\n\ttextconv = /tmp/x\n', '[core]\n\tsshCommand = x\n', '[credential]\n\thelper = x\n', '[core]\n\thooksPath = /tmp\n']) {
+    const cfg = path.join(ws, '.git/config'), orig = readFileSync(cfg, 'utf8')
+    appendFileSync(cfg, extra)
+    assert.equal(await code(g.handle(req({ action: 'pull' }))), 409, extra)
+    writeFileSync(cfg, orig)
+  }
+  assert.equal(existsSync(path.join(ws, 'b.txt')), false)
+  assert.equal((await g.handle(req({ action: 'pull' }))).changed, 1) // clean config still pulls
+})
+
+test('project lock is shared between git jobs and tool runs', async () => {
+  const l = new ProjectLocks()
+  assert.ok(l.acquireExec(P)); assert.ok(l.acquireExec(P))
+  assert.equal(l.acquireGit(P), false)
+  l.releaseExec(P); assert.equal(l.acquireGit(P), false); l.releaseExec(P)
+  assert.ok(l.acquireGit(P)); assert.equal(l.acquireExec(P), false); assert.equal(l.acquireGit(P), false)
+  l.releaseGit(P); assert.ok(l.acquireExec(P))
+  const f = fixture(), g = new GitSync({ baseUrl: f.base, locks: l, exec: async () => 'empty\n' })
+  assert.equal(await code(g.handle(req())), 409) // a tool run holds the project
+})
+
+test('failed clone never deletes files that appeared after the empty check', async () => {
+  const f = fixture(), ws = mk(), real = fakeExec(ws)
+  const g = new GitSync({ baseUrl: f.base, exec: async (p, s, e, src, sig) => { if (src) writeFileSync(path.join(ws, 'late.txt'), 'x'); return real(p, s, e, src, sig) } })
+  assert.equal(await code(g.handle(req())), 409)
+  assert.deepEqual(readdirSync(ws), ['late.txt'])
 })

@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { DockerSandbox, UUID } from './sandbox.js'
-import { GitError, GitSync, dockerVolumeExec } from './git-sync.js'
+import { GitError, GitSync, ProjectLocks, dockerVolumeExec } from './git-sync.js'
 
 const secret = process.env.OQELIRA_RUNNER_TOKEN ?? ''
 if (Buffer.byteLength(secret) < 32) throw new Error('Set a random OQELIRA_RUNNER_TOKEN of at least 32 bytes')
@@ -11,7 +11,8 @@ const image = process.env.OQELIRA_WORKER_IMAGE ?? 'oqelira-worker:local'
 if (process.env.NODE_ENV === 'production' && (runtime !== 'runsc' || !image.includes('@sha256:'))) throw new Error('Production runner requires gVisor runsc and a digest-pinned worker image')
 const sandbox = new DockerSandbox(image, runtime)
 let active = 0
-const git = new GitSync({ exec: dockerVolumeExec(image, runtime), log: m => console.error(`runner git: ${m}`) })
+const locks = new ProjectLocks()
+const git = new GitSync({ locks, exec: dockerVolumeExec(image, runtime), log: m => console.error(`runner git: ${m}`) })
 const server = createServer((req, res) => {
   const reply = (status: number, result: unknown) => { res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(result)) }
   const controller = new AbortController()
@@ -45,8 +46,11 @@ const server = createServer((req, res) => {
       if (!data || typeof data.project !== 'string' || !UUID.test(data.project)) { reply(400, { error: 'Invalid project' }); return }
       const tool = sandbox.tools(data.project).find(t => t.spec.name === data.name)
       if (!tool) { reply(400, { error: 'Invalid tool' }); return }
-      const output = await tool.run(data.input, { cwd: '/workspace', signal: controller.signal })
-      reply(200, { output })
+      if (!locks.acquireExec(data.project)) { reply(409, { error: 'The project is busy with a GitHub import or pull; retry shortly' }); return }
+      try {
+        const output = await tool.run(data.input, { cwd: '/workspace', signal: controller.signal })
+        reply(200, { output })
+      } finally { locks.releaseExec(data.project) }
     } finally { active-- }
   })().catch(() => { if (!res.headersSent && !res.destroyed) reply(503, { error: 'Isolated operation failed' }) })
 })
