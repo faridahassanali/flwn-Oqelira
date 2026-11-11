@@ -3,7 +3,8 @@ import { icon } from './icons.js'
 import { crumbs, joinPath, lineCount } from './files.js'
 import type { Listing } from './files.js'
 import { diffLines, parseGit, statusLabel } from './git.js'
-import type { GithubStatus } from './github.js'
+import { relativeTime } from './github.js'
+import type { GithubSource, GithubStatus, Repo } from './github.js'
 
 /** HTML builders for the Files and Git pages. State lives in the workspace; these only describe it. */
 export type TreeNode = Listing | 'loading' | { error: string }
@@ -106,20 +107,59 @@ export function githubCard(s: GithubUi): string {
   const state = githubCardState(s)
   const busy = s.busy ? 'disabled' : ''
   const head = (chip: string) => `<div class="connection-head"><span class="connection-mark">${icon('Plug')}</span><div><h2>GitHub.</h2><small class="muted">Import repositories and keep them in sync.</small></div>${chip}</div>`
+  const scopeNote = `<p class="scope-note">${icon('ShieldCheck')}<span>GitHub's repo permission lets this app read and change your repositories, including private ones. Oqelira only clones and pulls; it never pushes. You can disconnect any time here, and revoke access in your <a class="text-link" href="https://github.com/settings/applications" target="_blank" rel="noopener noreferrer">GitHub settings</a>.</span></p>`
   let body: string
   switch (state) {
     case 'loading': return `<section class="connection-card" aria-busy="true" aria-label="GitHub">${head('')}<div class="load-state" role="status"><span class="skeleton-line"></span></div></section>`
     case 'error': body = `${head('')}<div class="notice error" role="alert"><div>${icon('Circle')}<span>${escape(s.error)}</span></div><button data-gh-retry data-fk="gh-retry">${icon('Refresh')} Try again</button></div>`; break
     case 'unconfigured': body = `${head('<span class="chip">Not set up</span>')}<p>GitHub is not set up on this server. An administrator needs to add a GitHub app to the server configuration before anyone can connect.</p>`; break
-    case 'reconnect': body = `${head('<span class="chip warn">Needs attention</span>')}<div class="notice error" role="alert"><div>${icon('Circle')}<span>GitHub needs to be reconnected. Your access expired or was revoked.</span></div></div><div class="form-actions"><button class="primary" data-gh-connect data-fk="gh-connect" ${busy}>${icon('Plug')} Reconnect GitHub</button></div>`; break
-    case 'disconnected': body = `${head('<span class="chip">Not connected</span>')}<p>Connect GitHub to import a repository into a project. Oqelira asks for read access to your repositories and your profile name.</p><div class="form-actions"><button class="primary" data-gh-connect data-fk="gh-connect" ${busy}>${icon('Plug')} Connect GitHub</button></div>`; break
-    default: body = `${head('<span class="chip ok">Connected</span>')}<p>Connected as <strong>${escape(s.status?.login ?? 'your GitHub account')}</strong>.</p>${s.confirming ? `<div class="confirm" role="alertdialog" aria-label="Disconnect GitHub"><p>Disconnect GitHub? Imported projects keep their files, but you cannot import or pull until you connect again.</p><div class="form-actions"><button data-gh-disconnect-yes data-fk="gh-yes" ${busy}>Disconnect</button><button data-gh-disconnect-no data-fk="gh-no">Keep connected</button></div></div>` : `<div class="form-actions"><button data-gh-disconnect data-fk="gh-disconnect" ${busy}>${icon('Unplug')} Disconnect</button></div>`}`
+    case 'reconnect': body = `${head('<span class="chip warn">Needs attention</span>')}<div class="notice error" role="alert"><div>${icon('Circle')}<span>GitHub needs to be reconnected. Your access expired or was revoked.</span></div></div>${scopeNote}<div class="form-actions"><button class="primary" data-gh-connect data-fk="gh-connect" ${busy}>${icon('Plug')} Reconnect GitHub</button></div>`; break
+    case 'disconnected': body = `${head('<span class="chip">Not connected</span>')}<p>Connect GitHub to import a repository into a project.</p>${scopeNote}<div class="form-actions"><button class="primary" data-gh-connect data-fk="gh-connect" ${busy}>${icon('Plug')} Connect GitHub</button></div>`; break
+    default: body = `${head('<span class="chip ok">Connected</span>')}<p>Connected as <strong>${escape(s.status?.login ?? 'your GitHub account')}</strong>.</p>${s.confirming ? `<div class="confirm" role="alertdialog" aria-label="Disconnect GitHub"><p>Disconnect GitHub? Imported projects keep their files, but you cannot import or pull until you connect again.</p><div class="form-actions"><button data-gh-disconnect-yes data-fk="gh-yes" ${busy}>Disconnect</button><button data-gh-disconnect-no data-fk="gh-no">Keep connected</button></div></div>` : `<div class="form-actions"><button data-gh-disconnect data-fk="gh-disconnect" ${busy}>${icon('Unplug')} Disconnect</button><a class="text-link" href="https://github.com/settings/applications" target="_blank" rel="noopener noreferrer">Review access in GitHub settings</a></div>`}`
   }
   return `<section class="connection-card" aria-label="GitHub">${body}</section>`
 }
 
 export function connectionsPage(s: GithubUi): string {
   return `<div class="page-wide"><div class="page-title"><p class="eyebrow">Your accounts</p><h1>Connections.</h1><p>Link outside services so projects can use them. Nothing is shared until you connect.</p></div>${githubCard(s)}</div>`
+}
+
+export function sourceBadge(source: GithubSource | null | undefined, now = Date.now()): string {
+  if (!source) return ''
+  const state = source.state === 'syncing' ? `<span class="chip" role="status">${icon('LoaderCircle', 'spinner')} Syncing</span>`
+    : source.state === 'error' ? '<span class="chip warn">Sync failed</span>'
+    : `<span class="chip ok">Synced ${escape(relativeTime(source.syncedAt, now))}</span>`
+  return `<span class="source-badge"><span class="chip source-repo">${icon('Git')}<span>${escape(source.repo)} · ${escape(source.branch)}</span></span>${state}</span>`
+}
+
+export interface ProjectRow { id: string; name: string; source?: GithubSource | null }
+export function projectList(rows: ProjectRow[], busy: boolean, now = Date.now()): string {
+  return rows.map(row => `<div class="info-card project-row"><div class="project-main"><strong>${escape(row.name)}</strong>${sourceBadge(row.source, now)}${row.source?.state === 'error' && row.source.error ? `<p class="source-error" role="alert">${escape(row.source.error)}</p>` : ''}</div><div class="form-actions"><button data-open-project="${escape(row.id)}" ${busy ? 'disabled' : ''}>Open</button>${row.source ? `<button data-pull="${escape(row.id)}" ${busy || row.source.state === 'syncing' ? 'disabled' : ''}>${icon('Download')} Pull latest</button>` : ''}</div></div>`).join('')
+}
+
+/** Repository source card on the Git page. */
+export function sourceCard(source: GithubSource | null | undefined, failed: boolean, projectId: string, now = Date.now()): string {
+  if (failed) return '<section class="source-card"><p class="muted">The repository source could not be loaded.</p></section>'
+  if (!source) return `<section class="source-card"><p class="eyebrow">Repository source</p><p>No GitHub repository is linked to this project. Import one from the Projects page.</p></section>`
+  return `<section class="source-card"><p class="eyebrow">Repository source</p><div class="source-line">${sourceBadge(source, now)}${source.commit ? `<small class="muted">Commit <code>${escape(source.commit.slice(0, 7))}</code></small>` : ''}</div>${source.state === 'error' && source.error ? `<p class="source-error" role="alert">${escape(source.error)}</p>` : ''}<div class="form-actions"><button data-pull="${escape(projectId)}" ${source.state === 'syncing' ? 'disabled' : ''}>${icon('Download')} Pull latest</button></div></section>`
+}
+
+export interface ImportUi {
+  open: boolean; query: string; page: number; repos: Repo[]; next?: number; loading: boolean; error: string
+  picked?: string; branch: string; target: 'new' | 'current'; currentName?: string; busy: boolean
+  progress?: GithubSource; now?: number
+}
+export function importCard(s: ImportUi): string {
+  const head = `<div class="connection-head"><span class="connection-mark">${icon('Download')}</span><div><h2>Import from GitHub.</h2><small class="muted">Bring a repository into a project.</small></div></div>`
+  if (!s.open) return `<section class="import-card" aria-label="Import from GitHub">${head}<div class="form-actions"><button data-import-open data-fk="import-open">${icon('Download')} Import from GitHub</button></div></section>`
+  const now = s.now ?? Date.now()
+  const picked = s.repos.find(repo => repo.fullName === s.picked)
+  const progress = s.progress ? `<div class="import-progress" role="status" aria-live="polite">${s.progress.state === 'syncing' ? `${icon('LoaderCircle', 'spinner')}<span>Importing ${escape(s.progress.repo)}. This can take a minute.</span>` : s.progress.state === 'error' ? `${icon('Circle')}<span>Import failed: ${escape(s.progress.error ?? 'unknown error')}</span>` : `${icon('Check', 'draw-check')}<span>Imported ${escape(s.progress.repo)} · ${escape(s.progress.branch)}.</span><button data-open-imported data-fk="open-imported">Open project</button>`}</div>` : ''
+  const list = s.repos.length ? `<ul class="repo-list" aria-label="Repositories">${s.repos.map(repo => `<li><button class="repo-row" data-repo="${escape(repo.fullName)}" aria-pressed="${repo.fullName === s.picked}" data-fk="repo-${escape(repo.fullName)}"><span class="repo-title"><strong>${escape(repo.fullName)}</strong>${repo.private ? `<span class="chip">${icon('Lock')} Private</span>` : ''}</span>${repo.description ? `<span class="repo-desc">${escape(repo.description)}</span>` : ''}<small class="muted">Last pushed ${escape(relativeTime(repo.pushedAt, now))}</small></button></li>`).join('')}</ul>`
+    : s.loading ? '<div class="load-state" role="status"><span class="skeleton-line"></span></div>' : s.error ? '' : '<div class="empty-state"><p>No repositories match.</p><small>Try a different search.</small></div>'
+  const pager = s.page > 1 || s.next ? `<nav class="pager" aria-label="Repository pages"><button data-repo-page="${s.page - 1}" ${s.page <= 1 || s.loading ? 'disabled' : ''}>${icon('ChevronLeft')} Previous</button><span class="muted">Page ${s.page}</span><button data-repo-page="${s.next ?? s.page + 1}" ${!s.next || s.loading ? 'disabled' : ''}>Next ${icon('ChevronRight')}</button></nav>` : ''
+  const form = picked ? `<form id="import-form" class="import-form"><p>Importing <strong>${escape(picked.fullName)}</strong></p><label>Branch<input name="branch" maxlength="255" value="${escape(s.branch)}" placeholder="${escape(picked.defaultBranch)}"></label>${s.currentName ? `<label>Where to put it<select name="target"><option value="new" ${s.target === 'new' ? 'selected' : ''}>A new project named ${escape(picked.fullName.split('/').pop() ?? '')}</option><option value="current" ${s.target === 'current' ? 'selected' : ''}>The current project, ${escape(s.currentName)}</option></select></label>` : ''}<button type="submit" class="save-button" ${s.busy ? 'disabled aria-busy="true"' : ''}>${icon(s.busy ? 'LoaderCircle' : 'Download', s.busy ? 'spinner' : '')} Import</button></form>` : ''
+  return `<section class="import-card" aria-label="Import from GitHub">${head}${progress}<form id="repo-search" role="search"><label class="sr-only" for="repo-query">Search repositories</label><div class="search-row"><input id="repo-query" name="query" type="search" maxlength="100" placeholder="Search your repositories" value="${escape(s.query)}"><button type="submit" ${s.loading ? 'disabled' : ''}>${icon('Search')} Search</button></div></form>${s.error ? `<div class="notice error" role="alert"><div>${icon('Circle')}<span>${escape(s.error)}</span></div></div>` : ''}${list}${pager}${form}</section>`
 }
 
 /** Short row for Settings that points to the full Connections page. */

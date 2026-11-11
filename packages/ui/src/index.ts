@@ -1,6 +1,6 @@
 import type { Approval, HostConfig, HostEvent } from '@oqelira/protocol'
 import { approve, getConfig, run } from './transport.js'
-import { api, showSignIn, socialSignIn } from './cloud.js'
+import { ApiError, api, showSignIn, socialSignIn } from './cloud.js'
 import type { Project, SavedConversation } from './cloud.js'
 import { brand } from './brand.js'
 import { icon } from './icons.js'
@@ -8,10 +8,10 @@ import type { IconName } from './icons.js'
 import { exitElement, timing } from './motion.js'
 import { navGroups, navLabel } from './nav.js'
 import { parseListing } from './files.js'
-import { connectionsPage, filesPage, gitPage, settingsConnections } from './views.js'
-import type { GithubUi, TreeNode } from './views.js'
-import { connectGithub, describeFailure, disconnectGithub, githubReturn, githubStatus, withoutGithubReturn } from './github.js'
-import type { GithubStatus } from './github.js'
+import { connectionsPage, filesPage, gitPage, githubCardState, importCard, projectList, settingsConnections, sourceCard } from './views.js'
+import type { GithubUi, ImportUi, TreeNode } from './views.js'
+import { connectGithub, describeFailure, disconnectGithub, githubReturn, githubStatus, importRepo, listRepos, needsReconnect, pollUntilSettled, projectSource, pullLatest, repoName, withoutGithubReturn } from './github.js'
+import type { GithubSource, GithubStatus, Repo } from './github.js'
 
 /** Shared renderer for the browser and sandboxed desktop. No credentials or model SDKs. */
 export function mountWorkspace(root: HTMLElement): () => void {
@@ -59,6 +59,59 @@ export function mountWorkspace(root: HTMLElement): () => void {
     try { ghStatus = await githubStatus() } catch (e) { ghError = describeFailure(e, 'Could not check GitHub') }
     ghLoading = false; render()
   }
+  const sources = new Map<string, GithubSource | null>(), sourceFailed = new Set<string>(), watching = new Set<string>(), pollAbort = new AbortController()
+  const imp = { open: false, query: '', page: 1, repos: [] as Repo[], next: undefined as number | undefined, loading: false, error: '', picked: undefined as string | undefined, branch: '', target: 'new' as 'new' | 'current', busy: false, projectId: undefined as string | undefined }
+  const importUi = (): ImportUi => { const current = projects.find(p => p.id === projectId); return { ...imp, currentName: current && !sources.get(current.id) ? current.name : undefined, progress: (imp.projectId ? sources.get(imp.projectId) : undefined) ?? undefined } }
+  /** Polls a project's repository source every few seconds until it stops syncing, then refreshes files and Git. */
+  function watch(id: string) {
+    if (watching.has(id)) return
+    watching.add(id)
+    void pollUntilSettled(() => projectSource(id), source => { if (source) sources.set(id, source); render() }, ms => new Promise(resolve => setTimeout(resolve, ms)), pollAbort.signal).finally(() => {
+      watching.delete(id)
+      if (disposed || id !== projectId || sources.get(id)?.state !== 'idle') return
+      tree.clear(); expanded.clear(); openedFile = undefined; gitRaw = undefined
+      if (section === 'Explorer') void loadDir('.')
+      if (section === 'Git') void loadGit()
+    })
+  }
+  async function loadSources() {
+    await Promise.all(projects.filter(p => !sources.has(p.id)).map(async p => {
+      try { sources.set(p.id, await projectSource(p.id)); sourceFailed.delete(p.id); if (sources.get(p.id)?.state === 'syncing') watch(p.id) }
+      catch (e) { sources.set(p.id, null); if (!(e instanceof ApiError && e.status === 404)) sourceFailed.add(p.id) }
+    }))
+    render()
+  }
+  async function searchRepos(page: number) {
+    imp.loading = true; imp.error = ''; imp.page = page; render()
+    try { const result = await listRepos(imp.query, page); imp.repos = result.repos; imp.next = result.nextPage; if (!result.repos.some(repo => repo.fullName === imp.picked)) imp.picked = undefined }
+    catch (e) { if (needsReconnect(e)) ghReconnect = true; imp.repos = []; imp.next = undefined; imp.error = describeFailure(e, 'Could not load repositories') + (needsReconnect(e) ? ' Reconnect GitHub on the Connections page.' : '') }
+    imp.loading = false; render()
+  }
+  async function startImport() {
+    if (!ghStatus && !ghError) await loadGithub()
+    if (githubCardState(ghUi()) !== 'connected') { section = 'Connections'; notice = 'Connect GitHub first to import a repository.'; render(); return }
+    imp.open = true; render(); void searchRepos(1)
+  }
+  async function runImport() {
+    const repo = imp.repos.find(item => item.fullName === imp.picked)
+    if (!repo || imp.busy) return
+    imp.busy = true; imp.error = ''; render()
+    try {
+      let id = projectId
+      if (imp.target !== 'current' || !id) { const created = await api<Project>('projects', { name: repoName(repo.fullName), organizationId: '' }); projects.push(created); id = created.id }
+      const branch = imp.branch.trim()
+      await importRepo(id, repo.fullName, branch || undefined)
+      imp.projectId = id; sources.set(id, { repo: repo.fullName, branch: branch || repo.defaultBranch, state: 'syncing' }); watch(id)
+    } catch (e) { if (needsReconnect(e)) ghReconnect = true; imp.error = describeFailure(e, 'Could not import') + (needsReconnect(e) ? ' Reconnect GitHub on the Connections page.' : '') }
+    imp.busy = false; render()
+  }
+  async function pull(id: string) {
+    const current = sources.get(id)
+    if (!current || current.state === 'syncing') return
+    try { await pullLatest(id); sources.set(id, { ...current, state: 'syncing', error: undefined }); watch(id) }
+    catch (e) { sources.set(id, { ...current, state: 'error', error: describeFailure(e, 'Could not pull') }) }
+    render()
+  }
   const resetProjectViews =() => { tree.clear(); expanded.clear(); openedFile = undefined; editing = 'none'; gitRaw = undefined; gitLoading = false; gitError = '' }
   const activity: { id: string; name: string; input: unknown; output?: string; isError?: boolean }[] = []
   let section = 'Chat'
@@ -89,6 +142,7 @@ export function mountWorkspace(root: HTMLElement): () => void {
   async function loadCloud() {
     if (config?.mode !== 'server') return
     [projects,teams] = await Promise.all([api<Project[]>('projects'),api<typeof teams>('teams')])
+    void loadSources()
     if (!projectId && projects.length) await loadProject(projects[0]!.id)
     if (!projects.length) section = 'Projects'
   }
@@ -141,6 +195,7 @@ export function mountWorkspace(root: HTMLElement): () => void {
     section = name; notice = ''; moreOpen = false
     if (name === 'Teams') { busy(true); void loadTeams().then(() => { busy(false); render() }).catch(() => { error = 'Could not load teams'; busy(false); render() }) }
     if (['Connections', 'Settings'].includes(name) && !ghStatus && !ghError) void loadGithub()
+    if (['Projects', 'Git'].includes(name) && config?.mode === 'server') void loadSources()
     if (config?.mode === 'server' && projectId) {
       if (name === 'Explorer' && !tree.has('.')) void loadDir('.')
       if (name === 'Git' && gitRaw === undefined && !gitLoading && !gitError) void loadGit()
@@ -235,6 +290,14 @@ export function mountWorkspace(root: HTMLElement): () => void {
       ghBusy = true; render()
       void disconnectGithub().then(() => { ghStatus = { configured: true, connected: false }; ghReconnect = false; notice = 'GitHub disconnected.' }).catch(e => { ghError = describeFailure(e, 'Could not disconnect GitHub') }).finally(() => { ghBusy = false; ghConfirm = false; render() })
     }, { signal })
+    root.querySelector('[data-import-open]')?.addEventListener('click', () => { void startImport() }, { signal })
+    root.querySelector<HTMLFormElement>('#repo-search')?.addEventListener('submit', event => { event.preventDefault(); imp.query = String(new FormData(event.target as HTMLFormElement).get('query') ?? '').trim(); void searchRepos(1) }, { signal })
+    root.querySelectorAll<HTMLButtonElement>('[data-repo]').forEach(button => button.addEventListener('click', () => { const repo = imp.repos.find(item => item.fullName === button.dataset.repo); if (!repo) return; imp.picked = repo.fullName; imp.branch = repo.defaultBranch; imp.target = 'new'; resetForms = true; render() }, { signal }))
+    root.querySelectorAll<HTMLButtonElement>('[data-repo-page]').forEach(button => button.addEventListener('click', () => { void searchRepos(Number(button.dataset.repoPage)) }, { signal }))
+    root.querySelector<HTMLFormElement>('#import-form')?.addEventListener('submit', event => { event.preventDefault(); const fields = new FormData(event.target as HTMLFormElement); imp.branch = String(fields.get('branch') ?? ''); imp.target = fields.get('target') === 'current' ? 'current' : 'new'; void runImport() }, { signal })
+    root.querySelector('[data-open-imported]')?.addEventListener('click', () => { if (imp.projectId) void loadProject(imp.projectId) }, { signal })
+    root.querySelectorAll<HTMLButtonElement>('[data-open-project]').forEach(button => button.addEventListener('click', () => { void loadProject(button.dataset.openProject!) }, { signal }))
+    root.querySelectorAll<HTMLButtonElement>('[data-pull]').forEach(button => button.addEventListener('click', () => { void pull(button.dataset.pull!) }, { signal }))
     root.querySelectorAll('[data-load-git]').forEach(button => button.addEventListener('click', () => { gitRaw = undefined; gitError = ''; void loadGit() }, { signal }))
     root.querySelector<HTMLFormElement>('#file-form')?.addEventListener('submit', event => {
       event.preventDefault(); if (!projectId || cloudBusy || activeRun || projectReadOnly()) return
@@ -401,10 +464,10 @@ export function mountWorkspace(root: HTMLElement): () => void {
   }
   function panelContent() {
     if (config?.mode === 'server' && section === 'Explorer') return filesPage({ projectId, tree, expanded, file: openedFile, editing, readOnly: projectReadOnly(), disabled: cloudBusy || !!activeRun })
-    if (config?.mode === 'server' && section === 'Git') return gitPage({ projectId, raw: gitRaw, loading: gitLoading, error: gitError, source: '', disabled: !!activeRun })
+    if (config?.mode === 'server' && section === 'Git') return gitPage({ projectId, raw: gitRaw, loading: gitLoading, error: gitError, source: projectId ? sourceCard(sources.get(projectId), sourceFailed.has(projectId), projectId) : '', disabled: !!activeRun })
     if (section === 'Connections' && config?.mode === 'server') return connectionsPage(ghUi())
     if(section==='Teams')return teamsContent()
-    if (section === 'Projects') return `<div class="page-panel"><h1>Your projects.</h1><p>Each project has its own files, conversations and memory.</p><form id="project-form"><label>Project name<input name="name" required maxlength="120"></label><label>Workspace<select name="organizationId"><option value="">Personal</option>${teams.filter(team=>team.role.split(',').some(role=>['owner','admin'].includes(role))).map(team=>`<option value="${escape(team.id)}">${escape(team.name)}</option>`).join('')}</select></label><button type="submit" ${cloudBusy || activeRun ? 'disabled' : ''}>Create project</button></form>${projects.map(p => `<div class="info-card">${escape(p.name)}</div>`).join('')}</div>`
+    if (section === 'Projects') return `<div class="page-panel"><h1>Your projects.</h1><p>Each project has its own files, conversations and memory.</p><form id="project-form"><label>Project name<input name="name" required maxlength="120"></label><label>Workspace<select name="organizationId"><option value="">Personal</option>${teams.filter(team=>team.role.split(',').some(role=>['owner','admin'].includes(role))).map(team=>`<option value="${escape(team.id)}">${escape(team.name)}</option>`).join('')}</select></label><button type="submit" ${cloudBusy || activeRun ? 'disabled' : ''}>Create project</button></form>${importCard(importUi())}${projectList(projects.map(p => ({ id: p.id, name: p.name, source: sources.get(p.id) })), cloudBusy || !!activeRun)}</div>`
     if (section === 'Memory') return `<div class="page-panel"><h1>Project memory.</h1><p>Notes are recalled in this project's conversations. Never save credentials here.</p>${projectId ? `<form id="memory-form"><label>Project fact<textarea name="content" required maxlength="4000"></textarea></label><button type="submit" ${cloudBusy || activeRun || projectReadOnly() ? 'disabled' : ''}>Save memory</button></form>${memories.map(m => `<div class="info-card memory-card"><p>${escape(m.content)}</p><button data-forget="${escape(m.id)}" ${cloudBusy || activeRun || projectReadOnly() ? 'disabled' : ''}>Remove</button></div>`).join('')}` : '<p>Choose a project first.</p>'}</div>`
     if (section === 'Tasks') return `<div class="page-panel"><p class="eyebrow">A LITTLE PROGRESS, EVERY DAY</p><h1>Your tasks.</h1>${tasks.length ? tasks.map(task => `<div class="task-row ${task.done ? 'done' : ''}"><span>${escape(task.text)}</span><small>${escape(task.status)}</small></div>`).join('') : '<p>Send a message to start your first task.</p>'}</div>`
     if (section === 'Terminal') return `<div class="page-panel"><h1>Commands.</h1>${toolContent(activity.filter(t => t.name === 'run_command'))}</div>`
@@ -440,5 +503,5 @@ export function mountWorkspace(root: HTMLElement): () => void {
       authCleanup = showSignIn(root, value, next => { config = next; authCleanup?.(); void loadCloud().then(render).catch(() => { error = 'Could not load your projects'; render() }) })
     } else { await loadCloud(); afterSignIn(); render() }
   }).catch(() => { error = 'Cannot reach the Oqelira server. Check the service and sign in again.'; render() })
-  return () => { disposed = true; authCleanup?.(); activeRun?.abort(); controller.abort(); cancelAnimationFrame(frame); clearTimeout(loadingTimer); clearTimeout(loadingExit); clearTimeout(copyTimer); viewTransition?.skipTransition(); root.replaceChildren() }
+  return () => { disposed = true; pollAbort.abort(); authCleanup?.(); activeRun?.abort(); controller.abort(); cancelAnimationFrame(frame); clearTimeout(loadingTimer); clearTimeout(loadingExit); clearTimeout(copyTimer); viewTransition?.skipTransition(); root.replaceChildren() }
 }
