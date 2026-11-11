@@ -6,10 +6,12 @@ import { exitElement, timing } from './motion.js'
 export interface Project { id: string; name: string;role?:string }
 export interface SavedConversation { id: string; title: string; model: string; status: string; messages?: ({role:'user';content:string}|{role:'assistant';text:string;toolCalls:{id:string;name:string;input:unknown}[]}|{role:'tool';results:{id:string;name:string;output:string;isError?:boolean}[]})[] }
 export const escape = (text: string) => text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!)
+export class ApiError extends Error { constructor(message: string, readonly status: number) { super(message) } }
 export async function api<T>(route: string, data?: unknown): Promise<T> {
   const response = await fetch('/api/' + route, data === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
-  const result = await response.json() as T & { error?: string; message?: string }
-  if (!response.ok) throw new Error(result.message ?? result.error ?? 'Request failed')
+  // A missing route can answer with HTML, so a body that is not JSON must not hide the status.
+  const result = await response.json().catch(() => ({})) as T & { error?: string; message?: string }
+  if (!response.ok) throw new ApiError(result.message ?? result.error ?? `Request failed (${response.status})`, response.status)
   return result
 }
 
