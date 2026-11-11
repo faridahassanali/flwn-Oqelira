@@ -24,11 +24,10 @@ if (config.production && (!runnerURL || new URL(runnerURL).protocol !== 'https:'
 const sandbox = runnerURL ? new RemoteSandbox(runnerURL, process.env.OQELIRA_RUNNER_TOKEN ?? '') : new DockerSandbox(process.env.OQELIRA_WORKER_IMAGE)
 const socialProviders:('google'|'github')[]=[]
 if(config.google)socialProviders.push('google')
-if(config.github)socialProviders.push('github')
 await pool.query('SELECT 1')
 // Each replica LISTENs on its own connection so any replica can wake a run owned by another.
 const channel = await PostgresRunChannel.open(pool, pgListen(config.databaseURL))
-const server = createCloudServer({ auth: createAuth(pool, config,mailPool?email=>enqueueAccountMail(mailPool,email):undefined), store: new Store(pool), channel, sandbox, origin: config.baseURL, dist: path.join(root, 'packages/web/dist'), models: modelsFromEnv(), provider: foundry,authCapabilities:{signup:config.signup,emailRecovery:!!mailSender,verification:config.requireEmailVerification,socialProviders} })
+const server = createCloudServer({ auth: createAuth(pool, config,mailPool?email=>enqueueAccountMail(mailPool,email):undefined), store: new Store(pool), channel, sandbox, origin: config.baseURL, dist: path.join(root, 'packages/web/dist'), models: modelsFromEnv(), provider: foundry,authCapabilities:{signup:config.signup,emailRecovery:!!mailSender,verification:config.requireEmailVerification,socialProviders,githubConnect:!!config.github},github:config.github&&{clientId:config.github.clientId,clientSecret:config.github.clientSecret} })
 const stopMail=startAccountMail(mailPool??pool,mailSender)
 await server.listen(config.port, process.env.OQELIRA_LISTEN_HOST ?? '127.0.0.1')
 process.stdout.write('Oqelira multi-user server ready\n')

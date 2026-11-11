@@ -45,6 +45,7 @@ test('provider sign-in starts with state and identity-only scopes without enabli
  try{
   for(const provider of ['google','github']){
    const response=await auth.handler(new Request(config.baseURL+'/api/auth/sign-in/social',{method:'POST',headers:{Origin:config.baseURL,'Content-Type':'application/json'},body:JSON.stringify({provider,callbackURL:config.baseURL+'/'})}))
+   if(provider==='github'){assert.equal(response.status,403);continue}
    assert.equal(response.status,200)
    const result=await response.json() as {url:string};const url=new URL(result.url)
    assert.equal(url.protocol,'https:');assert.ok(url.searchParams.get('state'))

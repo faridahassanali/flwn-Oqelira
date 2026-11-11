@@ -14,12 +14,14 @@ import type { Sandbox } from './sandbox.js'
 import { RunJournal, tailRun } from './journal.js'
 import type { RunChannel } from './channel.js'
 import {mayWrite,mayAdmin} from './access.js'
+import { createGithub } from './github.js'
+import type { GithubOptions } from './github.js'
 
-interface Options { auth: Auth; store: Store; channel: RunChannel; sandbox: Sandbox; origin: string; dist: string; models: readonly ModelConfig[]; provider: (model: ModelConfig) => ModelProvider; authCapabilities?:HostConfig['auth'] }
-class HttpError extends Error { constructor(readonly status: number, message: string) { super(message) } }
-const requireId = (value: unknown): string => { if (typeof value !== 'string' || !UUID.test(value)) throw new HttpError(400, 'Invalid resource ID'); return value }
+interface Options { auth: Auth; store: Store; channel: RunChannel; sandbox: Sandbox; origin: string; dist: string; models: readonly ModelConfig[]; provider: (model: ModelConfig) => ModelProvider; authCapabilities?:HostConfig['auth']; github?: GithubOptions }
+export class HttpError extends Error { constructor(readonly status: number, message: string) { super(message) } }
+export const requireId =(value: unknown): string => { if (typeof value !== 'string' || !UUID.test(value)) throw new HttpError(400, 'Invalid resource ID'); return value }
 const text = (value: unknown, max: number): string => { if (typeof value !== 'string' || !value.trim() || value.length > max) throw new HttpError(400, 'Invalid text'); return value.trim() }
-async function body(req: IncomingMessage) {
+export async function body(req: IncomingMessage) {
   if (!req.headers['content-type']?.startsWith('application/json')) throw new HttpError(415, 'Expected JSON')
   const chunks: Buffer[] = []; let size = 0
   for await (const chunk of req) { size += chunk.length; if (size > 32768) throw new HttpError(413, 'Request too large'); chunks.push(chunk) }
@@ -31,6 +33,7 @@ interface Run { user: string; owner:string;project:string;authSession: string; c
 export function createCloudServer(opts: Options) {
   const runs = new Map<string, Run>()
   const authHandler = toNodeHandler(opts.auth)
+  const hub = createGithub(opts.auth, opts.store, opts.sandbox, opts.github)
   const origin = new URL(opts.origin)
   const reply = (res: ServerResponse, status: number, data: unknown) => { res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(data)) }
   async function handle(req: IncomingMessage, res: ServerResponse) {
@@ -67,6 +70,7 @@ export function createCloudServer(opts: Options) {
     const user = session.user.id
     const accessProject=async(id:string,write=false)=>{const access=await opts.store.project(user,id);if(!access)throw new HttpError(404,'Project not found');if(write&&!mayWrite(access.role))throw new HttpError(403,'Your team role cannot change this project');return access}
     if (!await opts.store.takeQuota(user, 'api', 120, 60)) throw new HttpError(429, 'Request limit reached; wait before retrying')
+    if (await hub.route({ req, res, url, user, reply, project: accessProject })) return
     if (req.method === 'GET' && url.pathname === '/api/projects') { reply(res, 200, await opts.store.projects(user)); return }
     if(req.method==='GET'&&url.pathname==='/api/teams'){reply(res,200,await opts.store.organizations(user));return}
     if (req.method === 'POST' && url.pathname === '/api/projects') { const data = await body(req); if ((await opts.store.projects(user)).length >= 20) throw new HttpError(429, 'Project limit reached');const organization=data.organizationId===undefined||data.organizationId===''?null:text(data.organizationId,128);if(organization&&!mayAdmin((await opts.store.organizations(user)).find(team=>team.id===organization)?.role))throw new HttpError(403,'A team administrator must create shared projects');reply(res, 201, await opts.store.createProject(user, text(data.name, 120),organization)); return }
@@ -230,10 +234,10 @@ export function createCloudServer(opts: Options) {
       runs.delete(runId);res.end()
     }
   }
-  const server = createServer((req, res) => { void handle(req, res).catch(error => { if (res.headersSent) { res.end(); return }; reply(res, error instanceof HttpError ? error.status : 500, { error: error instanceof HttpError ? error.message : 'Request failed' }) }) })
+  const server = createServer((req, res) => { void handle(req, res).catch(error => {  if (res.headersSent) { res.end(); return }; reply(res, error instanceof HttpError ? error.status : 500, { error: error instanceof HttpError ? error.message : 'Request failed' }) }) })
   server.requestTimeout = 30000; server.headersTimeout = 15000
   return {
-    async listen(port: number, host = '127.0.0.1') { await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve) }); return server.address() },
+    async listen(port: number, host = '127.0.0.1') { await hub.recover(); await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve) }); return server.address() },
     async close() { for (const run of runs.values()) { run.controller.abort(); run.pending=undefined }; server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())) },
   }
 }

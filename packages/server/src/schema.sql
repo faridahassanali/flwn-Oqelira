@@ -90,3 +90,14 @@ CREATE TABLE IF NOT EXISTS oq_account_mail (
 ALTER TABLE oq_projects ADD COLUMN IF NOT EXISTS organization_id text REFERENCES organization(id) ON DELETE CASCADE;
 ALTER TABLE oq_audit ADD COLUMN IF NOT EXISTS actor_id text REFERENCES "user"(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS oq_projects_organization ON oq_projects(organization_id);
+
+CREATE TABLE IF NOT EXISTS oq_project_source (
+  project_id uuid PRIMARY KEY REFERENCES oq_projects(id) ON DELETE CASCADE,
+  repo text NOT NULL,
+  branch text NOT NULL DEFAULT '',
+  "commit" text,
+  state text NOT NULL DEFAULT 'idle' CHECK (state IN ('idle','syncing','error')),
+  error text,
+  synced_at timestamptz,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
