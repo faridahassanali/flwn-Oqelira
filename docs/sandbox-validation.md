@@ -46,3 +46,29 @@ The WSL2 result is not a production isolation proof. Before production:
    ownership, and a clean worker start after restore.
 5. Record image digest, host OS/kernel, Docker and gVisor versions, commands,
    timestamps, and results. Treat any failed check as a deployment blocker.
+
+## GitHub import and pull (`POST /git`): validation status
+
+Implemented in `packages/server/src/git-sync.ts` (import and pull only; nothing
+is ever pushed). Verified by automated tests with a local bare repository and
+the real volume scripts run against a temp directory: validation, clone, pull
+fast-forward, refusal on dirty or diverged trees (nothing changed), hooks not
+run, submodules not materialised, symlinks kept as symlinks, token absent from
+`.git` and logs, size cap, per-project 409, global cap, cleanup on failure.
+
+Verified only by reading, to be run on the target VM before enabling:
+
+1. The Docker volume step (`dockerVolumeExec`, `dockerGitArgs`): `--network none`,
+   uid 1000, gVisor, bind-mounted read-only source, `sh` entrypoint override of
+   the worker image. Confirm the image has `git` and `sh`, files land owned by
+   1000:1000, and a clone into a brand-new volume is counted by the XFS project
+   quota and inode watcher (the volume is created first; check the watcher
+   catches it before the data lands, otherwise an oversized clone is only
+   bounded by the 1 GiB cap).
+2. Outbound HTTPS from the runner host to github.com with a real token: fetch
+   works, a bad token gives a 403 with a safe message, the token is absent from
+   `ps -ef`, `/proc/*/cmdline`, journal logs and the volume.
+3. The runner service runs as an unprivileged user without docker group
+   membership beyond what it already needs, and `/tmp` is not shared.
+4. A repository with a malicious `.gitattributes`, case-colliding paths and a
+   large history, cloned and pulled, with hooks and symlinks inert.
