@@ -17,6 +17,17 @@ async function call(root, name, input) {
     processHandle.stdin.end(JSON.stringify({ name, input }))
   })
 }
+test('worker write_file refuses a dangling symlink pointing outside the workspace', async () => {
+  const base = await fs.mkdtemp(path.join(os.tmpdir(), 'oq-worker-sym-'))
+  const dir = path.join(base, 'ws'), outside = path.join(base, 'outside-target')
+  try {
+    await fs.mkdir(dir)
+    await fs.symlink(outside, path.join(dir, 'link'))
+    assert.ok((await call(dir, 'write_file', { path: 'link', content: 'pwn' })).error)
+    assert.ok((await call(dir, 'edit_file', { path: 'link', old_string: 'a', new_string: 'b' })).error)
+    await assert.rejects(fs.stat(outside))
+  } finally { await fs.rm(base, { recursive: true, force: true }) }
+})
 test('worker file operations persist, reject ambiguous edits, and hide credential paths', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'oq-worker-'))
   try {
