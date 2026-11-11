@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 
 /** @param {string} root @param {string} target */
@@ -35,11 +36,31 @@ export async function resolveInside(cwd, p, blocked) {
   }
 }
 
-/** Create or truncate-and-write without following a symlink at the final component, even if it was swapped in after the check. */
+/**
+ * Replace through a same-directory temporary file. Unlike O_NOFOLLOW (which Windows ignores), rename replaces a
+ * symlink at the final component rather than following it if an attacker swaps one in after the containment check.
+ */
 /** @param {string} file @param {string} text */
 export async function writeNoFollow(file, text) {
-  const c = fs.constants, handle = await fs.open(file, c.O_WRONLY | c.O_CREAT | c.O_TRUNC | c.O_NOFOLLOW, 0o666)
-  try { await handle.writeFile(text, 'utf8') } finally { await handle.close() }
+  const existing = await fs.lstat(file).catch(error => {
+    if (/** @type {NodeJS.ErrnoException} */ (error).code === 'ENOENT') return undefined
+    throw error
+  })
+  if (existing?.isSymbolicLink()) {
+    const error = new Error('refusing to follow a symbolic link')
+    Object.assign(error, { code: 'ELOOP' })
+    throw error
+  }
+  const temp = path.join(path.dirname(file), `.oqelira-write-${randomUUID()}`)
+  const handle = await fs.open(temp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, existing?.mode ? existing.mode & 0o777 : 0o666)
+  try {
+    await handle.writeFile(text, 'utf8')
+    await handle.close()
+    await fs.rename(temp, file)
+  } finally {
+    await handle.close().catch(() => {})
+    await fs.rm(temp, { force: true }).catch(() => {})
+  }
 }
 
 /** Read without following a symlink at the final component. */
