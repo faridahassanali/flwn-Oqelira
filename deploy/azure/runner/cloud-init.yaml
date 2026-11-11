@@ -1,0 +1,377 @@
+#cloud-config
+# Oqelira sandbox runner first-boot configuration.
+# Validated against the live Sweden Central runner VM. Revalidate after changing this bootstrap configuration.
+# Placeholders replaced by runner-vm.bicep (none are secrets):
+#   __FQDN__  __QUOTA_GIB__  __INODE_LIMIT__  __STORAGE_ACCOUNT__
+# The runner token is generated ON the VM by oqelira-firstboot.sh and is never
+# present in this text, in bicep outputs or in logs.
+package_update: true
+packages: [ca-certificates, curl, gnupg, xfsprogs, quota, zstd, jq, openssl, nftables, xz-utils]
+
+write_files:
+  - path: /usr/local/sbin/oqelira-firstboot.sh
+    permissions: '0700'
+    content: |
+      #!/usr/bin/env bash
+      # No `set -x`: keeps the token out of cloud-init logs.
+      set -euo pipefail
+      export DEBIAN_FRONTEND=noninteractive
+      install -d -m 0755 /etc/apt/keyrings
+
+      # 1. Data disk -> XFS + prjquota at /var/lib/oqelira (UUID in fstab).
+      DISK=/dev/disk/azure/scsi1/lun0   # Validated data-disk LUN path on the live VM.
+      for _ in $(seq 1 30); do [ -b "$DISK" ] && break; sleep 2; done
+      [ -b "$DISK" ] || { echo "data disk not found" >&2; exit 1; }
+      blkid "$DISK" >/dev/null 2>&1 || mkfs.xfs -L oqdata "$DISK"
+      UUID=$(blkid -s UUID -o value "$DISK")
+      install -d -m 0755 /var/lib/oqelira
+      # nofail: a missing disk must not hang boot; the runner unit RequiresMountsFor, so it just stays down.
+      grep -q "$UUID" /etc/fstab || echo "UUID=$UUID /var/lib/oqelira xfs defaults,prjquota,nofail 0 2" >> /etc/fstab
+      systemctl daemon-reload
+      mountpoint -q /var/lib/oqelira || mount /var/lib/oqelira
+      install -d -m 0711 /var/lib/oqelira/docker
+
+      # 2. gVisor (official apt repo, per gvisor.dev/docs/user_guide/install, checked 2026-11-10).
+      curl -fsSL https://gvisor.dev/archive.key | gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" > /etc/apt/sources.list.d/gvisor.list
+      apt-get update && apt-get install -y runsc
+      RUNSC=$(command -v runsc)
+
+      # 3. Docker daemon config BEFORE installing Docker so data-root is right from first start.
+      install -d -m 0755 /etc/docker
+      jq -n --arg p "$RUNSC" '{"data-root":"/var/lib/oqelira/docker","runtimes":{"runsc":{"path":$p}},"live-restore":true}' > /etc/docker/daemon.json
+
+      # 4. Docker Engine (official deb822 repo, docs.docker.com/engine/install/ubuntu, checked 2026-11-10).
+      curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+      chmod a+r /etc/apt/keyrings/docker.asc
+      cat > /etc/apt/sources.list.d/docker.sources <<EOF
+      Types: deb
+      URIs: https://download.docker.com/linux/ubuntu
+      Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
+      Components: stable
+      Architectures: $(dpkg --print-architecture)
+      Signed-By: /etc/apt/keyrings/docker.asc
+      EOF
+      apt-get update
+      apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin
+      systemctl enable --now docker
+
+      # 5. Caddy (official Cloudsmith repo, caddyserver.com/docs/install, checked 2026-11-10).
+      curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/gpg.key | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+      curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt > /etc/apt/sources.list.d/caddy-stable.list
+      chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg /etc/apt/sources.list.d/caddy-stable.list
+      apt-get update && apt-get install -y caddy
+
+      # 6. Node 24: official tarball, checksum verified against SHASUMS256.txt from nodejs.org (same TLS origin; no GPG check).
+      NODE_DIR=https://nodejs.org/dist/latest-v24.x
+      cd /tmp
+      curl -fsSLO "$NODE_DIR/SHASUMS256.txt"
+      F=$(grep -o 'node-v24[^ ]*-linux-x64\.tar\.xz' SHASUMS256.txt | head -1)
+      curl -fsSLO "$NODE_DIR/$F"
+      grep " $F\$" SHASUMS256.txt | sha256sum -c -
+      tar -xJf "$F" -C /usr/local --strip-components=1 --no-same-owner
+      rm -f "$F" SHASUMS256.txt
+
+      # 7. azcopy (Microsoft's stable aka.ms link; unpinned; backup/restore validated on the live VM).
+      curl -fsSL https://aka.ms/downloadazcopy-v10-linux -o /tmp/azcopy.tgz
+      tar -xzf /tmp/azcopy.tgz -C /tmp --wildcards '*/azcopy' --strip-components=1
+      install -m 0755 /tmp/azcopy /usr/local/bin/azcopy && rm -f /tmp/azcopy /tmp/azcopy.tgz
+
+      # 8. Service user (no login, no shell). Needs docker group to drive `docker run`; that is root-equivalent
+      #    on this host, which is why the host only runs the runner and its blast radius is this one VM.
+      id oqelira >/dev/null 2>&1 || useradd --system --shell /usr/sbin/nologin --home-dir /opt/oqelira --create-home oqelira
+      usermod -aG docker oqelira
+
+      # 9. Runner secret generated here, root-only. Never echoed.
+      install -d -m 0700 /etc/oqelira
+      if [ ! -s /etc/oqelira/runner.env ]; then
+        umask 077
+        {
+          echo "OQELIRA_RUNNER_TOKEN=$(openssl rand -hex 32)"
+          echo "OQELIRA_CONTAINER_RUNTIME=runsc"
+          echo "OQELIRA_WORKER_IMAGE=oqelira-worker:unset"
+          echo "OQELIRA_RUNNER_HOST=127.0.0.1"
+          echo "OQELIRA_RUNNER_PORT=4321"
+          echo "NODE_ENV=production"
+        } > /etc/oqelira/runner.env
+      fi
+      chmod 0600 /etc/oqelira/runner.env; chown root:root /etc/oqelira/runner.env
+      cat > /etc/oqelira/backup.env <<EOF
+      OQ_STORAGE_ACCOUNT=__STORAGE_ACCOUNT__
+      EOF
+      printf "QUOTA_GIB=__QUOTA_GIB__\nINODE_LIMIT=__INODE_LIMIT__\n" > /etc/oqelira/quota.env
+
+      # 10. Caddy + nftables + units.
+      install -m 0644 /etc/oqelira/Caddyfile /etc/caddy/Caddyfile
+      install -m 0644 /etc/oqelira/oqelira.nft /etc/nftables.conf
+      systemctl daemon-reload
+      systemctl enable --now nftables oqelira-quota.timer oqelira-backup.timer
+      systemctl enable oqelira-quota-watch.service && systemctl start oqelira-quota-watch.service
+      systemctl enable --now caddy && systemctl reload caddy || true
+      # The runner is NOT started here: no worker image or code exists yet. oqelira-install.sh starts it.
+      touch /var/lib/oqelira/.firstboot-done
+
+  - path: /usr/local/sbin/oqelira-install.sh
+    permissions: '0750'
+    content: |
+      #!/usr/bin/env bash
+      # Usage: sudo oqelira-install.sh /path/to/oqelira-code.tgz   (made by `git archive`).
+      set -euo pipefail
+      TGZ=${1:?tarball}
+      APP=/opt/oqelira/app
+      rm -rf "$APP.new" && install -d -o oqelira -g oqelira "$APP.new"
+      tar -xzf "$TGZ" -C "$APP.new" --no-same-owner
+      chown -R oqelira:oqelira "$APP.new"
+      rm -rf "$APP" && mv "$APP.new" "$APP"
+      cd "$APP"
+      runuser -u oqelira -- env HOME=/opt/oqelira npm ci --workspace=@oqelira/server --ignore-scripts
+      docker build -t oqelira-worker:build -f packages/worker/Dockerfile .
+      # Runner production mode needs a digest-pinned image reference. A local build has no RepoDigest, so push
+      # to a throwaway loopback registry to obtain one; the image stays in the local store afterwards.
+      docker rm -f oq-registry >/dev/null 2>&1 || true
+      docker run -d --rm --name oq-registry -p 127.0.0.1:5000:5000 registry:2 >/dev/null
+      for _ in $(seq 1 20); do curl -fs http://127.0.0.1:5000/v2/ >/dev/null && break; sleep 1; done
+      docker tag oqelira-worker:build 127.0.0.1:5000/oqelira-worker:build
+      docker push 127.0.0.1:5000/oqelira-worker:build >/dev/null
+      REF=$(docker image inspect 127.0.0.1:5000/oqelira-worker:build --format '{{index .RepoDigests 0}}')
+      docker stop oq-registry >/dev/null
+      case "$REF" in *@sha256:*) ;; *) echo "no digest obtained" >&2; exit 1;; esac
+      sed -i "s|^OQELIRA_WORKER_IMAGE=.*|OQELIRA_WORKER_IMAGE=$REF|" /etc/oqelira/runner.env
+      systemctl enable oqelira-runner
+      systemctl restart oqelira-runner
+      echo "Worker image: $REF"
+
+  - path: /usr/local/sbin/oqelira-quota.sh
+    permissions: '0755'
+    content: |
+      #!/usr/bin/env bash
+      # Applies an XFS project quota to every oq-project-* Docker volume.
+      # Runs from oqelira-quota-watch.service on every Docker volume-create event (so the quota lands in
+      # about 0.3 s as measured, before any usage) and from the 30 s timer as a fallback (missed events, restarts).
+      # Measured on the real VM before the watcher: gap 12-25 s, 4 parallel writers put 4 GiB into a 2 GiB project.
+      # flock: the watcher and the timer can overlap; /etc/projid must not be edited concurrently.
+      set -euo pipefail
+      exec 9>/run/oqelira-quota.lock; flock 9
+      . /etc/oqelira/quota.env
+      ROOT=/var/lib/oqelira
+      VOL=$ROOT/docker/volumes
+      [ -d "$VOL" ] || exit 0
+      touch /etc/projects /etc/projid
+      for d in "$VOL"/oq-project-*/_data; do
+        [ -d "$d" ] || continue
+        name=$(basename "$(dirname "$d")")
+        id=$(awk -F: -v n="$name" '$1==n{print $2}' /etc/projid)
+        if [ -z "$id" ]; then
+          id=$(( $(awk -F: 'BEGIN{m=9999}{if($2>m)m=$2}END{print m}' /etc/projid) + 1 ))
+          echo "$name:$id" >> /etc/projid
+        fi
+        grep -qxF "$id:$d" /etc/projects || echo "$id:$d" >> /etc/projects
+        # Trust the directory, not the files: a volume that was deleted and recreated under the same name has the
+        # same /etc/projid entry but a fresh directory with no project. Re-apply its project assignment whenever
+        # the real id differs. Limits are applied every pass too: this heals volumes created before an inode limit
+        # was introduced, and propagates a deliberate quota configuration change.
+        cur=$(xfs_io -r -c lsproj "$d" 2>/dev/null | awk '{print $3}')
+        if [ "$cur" != "$id" ]; then
+          # -s sets the project (with inherit flag) on the whole existing tree and new files inherit it.
+          xfs_quota -x -c "project -s $name" "$ROOT" >/dev/null
+        fi
+        xfs_quota -x -c "limit -p bsoft=${QUOTA_GIB}g bhard=${QUOTA_GIB}g isoft=${INODE_LIMIT:-1000000} ihard=${INODE_LIMIT:-1000000} $name" "$ROOT" >/dev/null
+      done
+
+  - path: /usr/local/sbin/oqelira-backup.sh
+    permissions: '0755'
+    content: |
+      #!/usr/bin/env bash
+      # Nightly: tar+zstd each project volume, stream to the backups container via managed identity.
+      # Not a crash-consistent snapshot: a worker writing during the tar can yield a torn file. Acceptable for
+      # source workspaces; take backups when idle for stricter needs.
+      set -euo pipefail
+      . /etc/oqelira/backup.env
+      export AZCOPY_AUTO_LOGIN_TYPE=MSI
+      day=$(date -u +%F)
+      for d in /var/lib/oqelira/docker/volumes/oq-project-*/_data; do
+        [ -d "$d" ] || continue
+        name=$(basename "$(dirname "$d")")
+        tar --numeric-owner -C "$d" -cf - . | zstd -T1 -q \
+          | azcopy cp "https://$OQ_STORAGE_ACCOUNT.blob.core.windows.net/backups/$day/$name.tar.zst" --from-to PipeBlob --log-level=ERROR
+      done
+
+  - path: /usr/local/sbin/oqelira-restore.sh
+    permissions: '0750'
+    content: |
+      #!/usr/bin/env bash
+      # Usage: sudo oqelira-restore.sh <project-uuid> <YYYY-MM-DD>.
+      # Restores into a NEW, empty volume. It refuses an existing volume: a live volume is writable by the
+      # project's own (untrusted) workers, and extracting into it as root would follow their symlinks. To replace a
+      # volume, stop its workers, `docker volume rm oq-project-<uuid>`, then run this. The archive is unpacked by an
+      # unprivileged, network-less container as the worker user, so nothing is ever written by host root. It mounts
+      # at /workspace (not a new path) so the volume root takes the worker user's ownership from the image.
+      set -euo pipefail
+      P=${1:?project uuid}; DAY=${2:?date}
+      [[ $P =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || { echo "bad uuid" >&2; exit 2; }
+      [[ $DAY =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "bad date" >&2; exit 2; }
+      . /etc/oqelira/backup.env
+      IMAGE=$(grep '^OQELIRA_WORKER_IMAGE=' /etc/oqelira/runner.env | cut -d= -f2-)
+      [ -n "$IMAGE" ] || { echo "worker image not set in runner.env" >&2; exit 2; }
+      if docker volume inspect "oq-project-$P" >/dev/null 2>&1; then
+        echo "volume oq-project-$P exists; stop its workers and remove it first" >&2; exit 3
+      fi
+      export AZCOPY_AUTO_LOGIN_TYPE=MSI
+      docker volume create "oq-project-$P" >/dev/null
+      if ! azcopy cp "https://$OQ_STORAGE_ACCOUNT.blob.core.windows.net/backups/$DAY/oq-project-$P.tar.zst" --from-to BlobPipe --log-level=ERROR \
+        | zstd -d -q \
+        | docker run --rm -i --runtime runsc --network none --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 \
+            --mount "type=volume,source=oq-project-$P,target=/workspace" --entrypoint tar "$IMAGE" --no-same-owner --no-same-permissions -C /workspace -xf -; then
+        docker volume rm "oq-project-$P" >/dev/null 2>&1 || true
+        echo "restore failed; the partial volume was removed" >&2; exit 4
+      fi
+      echo "restored oq-project-$P from $DAY"
+
+  - path: /etc/oqelira/Caddyfile
+    permissions: '0644'
+    content: |
+      {
+        servers {
+          timeouts {
+            read_header 10s
+            read_body 20s
+            idle 60s
+          }
+        }
+      }
+      __FQDN__ {
+        # Runner rejects >1.1 MB itself; cut earlier at the edge. Only POST /execute is ever valid.
+        request_body {
+          max_size 1200KB
+        }
+        @execute {
+          method POST
+          path /execute
+        }
+        handle @execute {
+          reverse_proxy 127.0.0.1:4321 {
+            transport http {
+              response_header_timeout 100s
+            }
+          }
+        }
+        handle {
+          respond "Not found" 404
+        }
+      }
+
+  - path: /etc/oqelira/oqelira.nft
+    permissions: '0644'
+    content: |
+      #!/usr/sbin/nft -f
+      # Connection-rate cap on 443 per source address (basic flood damping). Caddy has no built-in rate limiter
+      # and this avoids a custom Caddy build. Container Apps egress shares few IPs: limit is generous.
+      add table inet oqelira
+      delete table inet oqelira
+      table inet oqelira {
+        set slow { type ipv4_addr; flags dynamic; timeout 1m; size 65535; }
+        chain input {
+          type filter hook input priority 0; policy accept;
+          tcp dport 443 ct state new add @slow { ip saddr limit rate over 30/second burst 60 packets } drop
+        }
+      }
+
+  - path: /etc/systemd/system/oqelira-runner.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Oqelira sandbox runner
+      After=docker.service network-online.target
+      Requires=docker.service
+      RequiresMountsFor=/var/lib/oqelira
+
+      [Service]
+      User=oqelira
+      Group=oqelira
+      SupplementaryGroups=docker
+      WorkingDirectory=/opt/oqelira/app/packages/server
+      EnvironmentFile=/etc/oqelira/runner.env
+      ExecStart=/usr/local/bin/node --import tsx src/runner.ts
+      Restart=always
+      RestartSec=3
+      # Hardening. The docker group is root-equivalent, so these limit the runner process, not the daemon.
+      NoNewPrivileges=yes
+      ProtectSystem=strict
+      ProtectHome=yes
+      PrivateTmp=yes
+      PrivateDevices=yes
+      ProtectKernelTunables=yes
+      ProtectKernelModules=yes
+      ProtectControlGroups=yes
+      RestrictSUIDSGID=yes
+      RestrictNamespaces=yes
+      LockPersonality=yes
+      CapabilityBoundingSet=
+      RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+      ReadWritePaths=/opt/oqelira
+      MemoryMax=768M
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/systemd/system/oqelira-quota.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Apply XFS project quotas to project volumes
+      RequiresMountsFor=/var/lib/oqelira
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/oqelira-quota.sh
+
+  - path: /etc/systemd/system/oqelira-quota-watch.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Apply project quota as soon as a project volume is created
+      After=docker.service
+      Requires=docker.service
+      RequiresMountsFor=/var/lib/oqelira
+      [Service]
+      ExecStart=/bin/bash -c "docker events --filter type=volume --filter event=create --format '{{.Actor.ID}}' | while read -r _; do /usr/local/sbin/oqelira-quota.sh; done"
+      Restart=always
+      RestartSec=2
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/systemd/system/oqelira-quota.timer
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Apply project quotas every 30 seconds
+      [Timer]
+      OnBootSec=30s
+      OnUnitActiveSec=30s
+      AccuracySec=1s
+      [Install]
+      WantedBy=timers.target
+
+  - path: /etc/systemd/system/oqelira-backup.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Back up project volumes to Blob Storage
+      RequiresMountsFor=/var/lib/oqelira
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/oqelira-backup.sh
+
+  - path: /etc/systemd/system/oqelira-backup.timer
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Nightly project volume backup
+      [Timer]
+      OnCalendar=*-*-* 02:30:00 UTC
+      RandomizedDelaySec=10m
+      Persistent=true
+      [Install]
+      WantedBy=timers.target
+
+runcmd:
+  - [bash, /usr/local/sbin/oqelira-firstboot.sh]
