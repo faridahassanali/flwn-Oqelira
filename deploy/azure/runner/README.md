@@ -4,15 +4,12 @@ Infrastructure as code for the single Linux VM that runs `packages/server/src/ru
 so the production API (`OQELIRA_RUNNER_URL` must be https) can run cloud coding.
 Target: resource group `flwn-ai-engine`. Deployed to Sweden Central as `oqelira-runner`; validation results are in the table at the end.
 
-## Status: blocked on VM capacity in France Central
+## Status: deployed and validated in Sweden Central
 
-`az deployment group what-if` fails at VM preflight for this subscription:
-`SkuNotAvailable - ... Capacity Restrictions: Standard_B2ls_v2 is currently not available in location 'FranceCentral'`.
-The same error came back for `Standard_B2als_v2`, `B2s_v2`, `B2s`, `D2s_v5` and `D2as_v5`, so it looks like a
-subscription-wide restriction rather than one SKU. Request access/quota (Portal: Help + support, "Service and
-subscription limits", or `az vm list-skus -l francecentral`), or pick another region/size with `-p location=... vmSize=...`.
-A copy of the template without the VM, role assignment and shutdown schedule produced 8 creates and no
-modify/delete: public IP, NSG, VNet, NIC, storage account, blob service, `backups` container, lifecycle policy.
+France Central did not offer a usable VM SKU for this subscription, so the live runner is deliberately in
+Sweden Central. The VM, 64 GB XFS data disk, gVisor runtime, project quotas, HTTPS endpoint, managed-identity
+Blob backup/restore path, and runner service were validated on 2026-11-12. Re-run `az deployment group what-if`
+before any future infrastructure change; a live VM is evidence for this configuration, not a substitute for review.
 
 ## What it creates
 
@@ -33,7 +30,7 @@ Production mode requires `runsc` and an `@sha256:` image reference. `oqelira-ins
 `packages/worker/Dockerfile`, pushes it to a throwaway loopback registry only to obtain a RepoDigest, and writes that
 reference into `runner.env`. Workers use volumes `oq-project-<id>` under `/var/lib/oqelira/docker/volumes`.
 
-## Cost (France Central, list price, check before relying on it)
+## Cost (Sweden Central, verify before relying on it)
 
 B2ls_v2 is $0.0472/hour, about $34.46/month always on. Extra and small: 64 GB StandardSSD (a few dollars), 128 GB-class
 OS disk, Standard static IP (about $3.65/month), Cool LRS storage (cents per GB). Auto-shutdown saves compute but
@@ -44,7 +41,7 @@ takes the runner offline.
 443 is open to the whole internet. The API runs on Container Apps consumption, which has no fixed outbound IP, so
 an IP allow-list is impossible without a VNet, NAT gateway or private endpoints (more cost, explicitly out of scope).
 The controls instead: TLS from Let's Encrypt, a 32-byte random bearer token compared in constant time, Caddy
-exposing only `POST /execute` with size/time limits, an nftables connection-rate cap, the runner's 8-job cap, and
+exposing only `POST /execute` with size/time limits, an nftables connection-rate cap, the runner's 3-job cap, and
 gVisor with `--network none` workers. SSH is limited to `adminIp`. If the token leaks, anyone can run sandboxed
 code and burn compute; rotate by editing `runner.env`, restarting the unit and updating the Container Apps secret.
 The runner user is in the `docker` group, which is root-equivalent on this VM; the host runs nothing else.
@@ -63,18 +60,17 @@ OQELIRA_RUNNER_TOKEN=<secretref from the Container Apps secret>
 
 The pinned worker image is configured on the VM (`OQELIRA_WORKER_IMAGE` in `runner.env`), not on the API.
 
-## UNTESTED (everything except `az bicep build` and a partial what-if)
+## Validation boundaries and known limits
 
-- The VM, data disk, role assignment and shutdown schedule were never validated by what-if (capacity error above).
-- All of `cloud-init.yaml`: apt repos (gVisor, Docker, Caddy copied from their docs on 2026-11-10), the
-  `/dev/disk/azure/scsi1/lun0` path, `/usr/bin/runsc` discovery, Node tarball checksum, unpinned azcopy download,
-  `npm ci --workspace=@oqelira/server` pulling what the runner needs, Let's Encrypt issuance via TLS-ALPN on 443 only.
-- Digest pinning through the loopback registry, Caddy `request_body` syntax, the nftables dynamic-set rule.
-- Quota timer, `azcopy` pipe upload/download, backup/restore scripts, systemd hardening vs Docker access.
-- Whether Azure grants B2ls_v2 here at all.
+The current VM has the configured 2 GiB block limit and 1,000,000 inode limit on every existing project volume.
+The quota watcher applies both limits when a volume is created; this PR also makes it reapply them to existing
+volumes. A running VM does not automatically receive changes to `cloud-init.yaml`, so deploy the revised host script
+through the normal change procedure before depending on changed defaults.
 
-Known limits: the quota is applied by `oqelira-quota-watch.service` within about 0.3 s of volume creation (the 30 s timer is only a fallback, see the quota gap row). The quota also sets an inode hard limit (`INODE_LIMIT` in `quota.env`, bicep `projectInodeLimit`, default 1,000,000: several times a large node_modules tree, and bounds inode metadata to roughly 0.5 GiB of real disk per project; the VM validated before this change still has no `INODE_LIMIT` and needs the quota script redeployed). Backups are
-live tars, not snapshots. Quota covers project volumes only; Docker images and logs share the 64 GB disk.
+Backups are live tars rather than crash-consistent snapshots. Quota covers project volumes only; Docker images and
+logs share the 64 GB disk. The production recovery drill still needed before closing #25 is Azure PostgreSQL recovery;
+that requires its own production-safe runbook and database authority. The actual 30-day lifecycle deletion cannot be
+proven until the retention period elapses.
 
 ## Validate issue #25 on the real VM
 

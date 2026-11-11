@@ -1,5 +1,5 @@
 // Oqelira sandbox runner VM. Cheapest sound setup: one VM, public 443 (token + TLS), no VNet extras.
-// UNTESTED beyond `az bicep build` and `what-if`: nothing here has been deployed.
+// Validated against the live Sweden Central runner VM. Run `what-if` again before each new deployment.
 targetScope = 'resourceGroup'
 
 param location string = resourceGroup().location

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds the code tarball and PRINTS the Azure and ssh commands to run. It creates nothing itself.
-# Usage: deploy/azure/runner/deploy.sh   (from anywhere inside the repo). UNTESTED end to end.
+# Usage: deploy/azure/runner/deploy.sh   (from anywhere inside the repo). Review `what-if` before every deployment.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 OUT=${OUT:-/tmp/oqelira-code.tgz}

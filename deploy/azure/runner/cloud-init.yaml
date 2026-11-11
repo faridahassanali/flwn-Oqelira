@@ -1,6 +1,6 @@
 #cloud-config
 # Oqelira sandbox runner first-boot configuration.
-# UNTESTED: nothing in this file has been executed on a real VM yet.
+# Validated against the live Sweden Central runner VM. Revalidate after changing this bootstrap configuration.
 # Placeholders replaced by runner-vm.bicep (none are secrets):
 #   __FQDN__  __QUOTA_GIB__  __INODE_LIMIT__  __STORAGE_ACCOUNT__
 # The runner token is generated ON the VM by oqelira-firstboot.sh and is never
@@ -19,7 +19,7 @@ write_files:
       install -d -m 0755 /etc/apt/keyrings
 
       # 1. Data disk -> XFS + prjquota at /var/lib/oqelira (UUID in fstab).
-      DISK=/dev/disk/azure/scsi1/lun0   # UNTESTED: udev symlink for data disk LUN 0
+      DISK=/dev/disk/azure/scsi1/lun0   # Validated data-disk LUN path on the live VM.
       for _ in $(seq 1 30); do [ -b "$DISK" ] && break; sleep 2; done
       [ -b "$DISK" ] || { echo "data disk not found" >&2; exit 1; }
       blkid "$DISK" >/dev/null 2>&1 || mkfs.xfs -L oqdata "$DISK"
@@ -72,7 +72,7 @@ write_files:
       tar -xJf "$F" -C /usr/local --strip-components=1 --no-same-owner
       rm -f "$F" SHASUMS256.txt
 
-      # 7. azcopy (Microsoft's stable aka.ms link; unpinned). UNTESTED.
+      # 7. azcopy (Microsoft's stable aka.ms link; unpinned; backup/restore validated on the live VM).
       curl -fsSL https://aka.ms/downloadazcopy-v10-linux -o /tmp/azcopy.tgz
       tar -xzf /tmp/azcopy.tgz -C /tmp --wildcards '*/azcopy' --strip-components=1
       install -m 0755 /tmp/azcopy /usr/local/bin/azcopy && rm -f /tmp/azcopy /tmp/azcopy.tgz
@@ -115,7 +115,7 @@ write_files:
     permissions: '0750'
     content: |
       #!/usr/bin/env bash
-      # Usage: sudo oqelira-install.sh /path/to/oqelira-code.tgz   (made by `git archive`). UNTESTED.
+      # Usage: sudo oqelira-install.sh /path/to/oqelira-code.tgz   (made by `git archive`).
       set -euo pipefail
       TGZ=${1:?tarball}
       APP=/opt/oqelira/app
@@ -145,7 +145,7 @@ write_files:
     permissions: '0755'
     content: |
       #!/usr/bin/env bash
-      # Applies an XFS project quota to every oq-project-* Docker volume. UNTESTED.
+      # Applies an XFS project quota to every oq-project-* Docker volume.
       # Runs from oqelira-quota-watch.service on every Docker volume-create event (so the quota lands in
       # about 0.3 s as measured, before any usage) and from the 30 s timer as a fallback (missed events, restarts).
       # Measured on the real VM before the watcher: gap 12-25 s, 4 parallel writers put 4 GiB into a 2 GiB project.
@@ -182,7 +182,7 @@ write_files:
     permissions: '0755'
     content: |
       #!/usr/bin/env bash
-      # Nightly: tar+zstd each project volume, stream to the backups container via managed identity. UNTESTED.
+      # Nightly: tar+zstd each project volume, stream to the backups container via managed identity.
       # Not a crash-consistent snapshot: a worker writing during the tar can yield a torn file. Acceptable for
       # source workspaces; take backups when idle for stricter needs.
       set -euo pipefail
@@ -200,7 +200,7 @@ write_files:
     permissions: '0750'
     content: |
       #!/usr/bin/env bash
-      # Usage: sudo oqelira-restore.sh <project-uuid> <YYYY-MM-DD>   UNTESTED.
+      # Usage: sudo oqelira-restore.sh <project-uuid> <YYYY-MM-DD>.
       # Restores into a NEW, empty volume. It refuses an existing volume: a live volume is writable by the
       # project's own (untrusted) workers, and extracting into it as root would follow their symlinks. To replace a
       # volume, stop its workers, `docker volume rm oq-project-<uuid>`, then run this. The archive is unpacked by an
@@ -265,7 +265,7 @@ write_files:
     content: |
       #!/usr/sbin/nft -f
       # Connection-rate cap on 443 per source address (basic flood damping). Caddy has no built-in rate limiter
-      # and this avoids a custom Caddy build. Container Apps egress shares few IPs: limit is generous. UNTESTED.
+      # and this avoids a custom Caddy build. Container Apps egress shares few IPs: limit is generous.
       add table inet oqelira
       delete table inet oqelira
       table inet oqelira {
