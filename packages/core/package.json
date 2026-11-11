@@ -6,13 +6,15 @@
   "main": "src/index.ts",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test test/provider.test.ts test/loop.test.ts test/search.test.ts test/changes.test.ts test/contain.test.ts test/web.test.ts test/memory.test.ts test/safe-text.test.ts test/permissions.test.ts test/env.test.ts test/prompt.test.ts",
-    "live": "node --env-file=../../.env --import tsx scripts/live-check.ts"
+    "test": "node --import tsx --test test/provider.test.ts test/loop.test.ts test/search.test.ts test/changes.test.ts test/contain.test.ts test/pack.test.ts test/web.test.ts test/memory.test.ts test/safe-text.test.ts test/permissions.test.ts test/env.test.ts test/prompt.test.ts test/prompt-eval.test.ts",
+    "live": "node --env-file=../../.env --import tsx scripts/live-check.ts",
+    "prompt:eval": "node --import tsx scripts/prompt-eval.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.101",
     "@ai-sdk/openai-compatible": "^3.0.75",
-    "ai": "^7.0.148"
+    "ai": "^7.0.148",
+    "undici": "^7.30.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

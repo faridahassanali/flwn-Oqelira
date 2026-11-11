@@ -10,6 +10,7 @@ import type { HostEvent } from '@oqelira/protocol'
 import { createAuth } from '../src/auth.js'
 import { migrate } from '../src/migrate.js'
 import { Store, recoverHistory } from '../src/store.js'
+import { PostgresRunChannel } from '../src/channel.js'
 import { createCloudServer } from '../src/server.js'
 import { serverConfig } from '../src/config.js'
 import { dockerArgs } from '../src/sandbox.js'
@@ -56,7 +57,7 @@ test('real auth, durable PostgreSQL sessions, tenant isolation, memory and appro
       yield { type: 'finish', reason: 'tool-calls' }
     } else { yield { type: 'text-delta', text: 'Saved' }; yield { type: 'finish', reason: 'stop' } }
   } }
-  const server = createCloudServer({ auth, store, sandbox: { tools: () => builtinTools.map(tool => ({...tool, run: async () => 'fixture output'})) }, origin: config.baseURL, dist: path.resolve('packages/web/dist'), models: [{ id: 'fixture', deployment: 'fixture-deployment', api: 'chat', speed: 'fast' }], provider: () => provider })
+  const server = createCloudServer({ auth, store, channel:await PostgresRunChannel.open(pool,(c,cb)=>db.listen(c,cb)), sandbox: { tools: () => builtinTools.map(tool => ({...tool, run: async () => 'fixture output'})) }, origin: config.baseURL, dist: path.resolve('packages/web/dist'), models: [{ id: 'fixture', deployment: 'fixture-deployment', api: 'chat', speed: 'fast' }], provider: () => provider })
   const address = await server.listen(port)
   assert.ok(address && typeof address !== 'string')
   const origin = `http://127.0.0.1:${address.port}`
