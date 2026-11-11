@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS oq_conversations (
   messages jsonb NOT NULL DEFAULT '[]',
   status text NOT NULL DEFAULT 'ready',
   active_run uuid,
+  active_session_id text,
   lease_until timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
@@ -89,4 +90,5 @@ CREATE TABLE IF NOT EXISTS oq_account_mail (
 
 ALTER TABLE oq_projects ADD COLUMN IF NOT EXISTS organization_id text REFERENCES organization(id) ON DELETE CASCADE;
 ALTER TABLE oq_audit ADD COLUMN IF NOT EXISTS actor_id text REFERENCES "user"(id) ON DELETE SET NULL;
+ALTER TABLE oq_conversations ADD COLUMN IF NOT EXISTS active_session_id text;
 CREATE INDEX IF NOT EXISTS oq_projects_organization ON oq_projects(organization_id);

@@ -123,6 +123,7 @@ export function createCloudServer(opts: Options) {
       if(!state)throw new HttpError(404,'Run not found')
       const current=runs.get(id)
       if(current&&(current.user!==user||current.authSession!==session.session.id))throw new HttpError(403,'Reconnect with the session that started this run')
+      if(!current){const activeSession=await opts.store.activeRunSession(user,id);if(activeSession&&activeSession!==session.session.id)throw new HttpError(403,'Reconnect with the session that started this run')}
       res.writeHead(200,{'Content-Type':'application/x-ndjson','Cache-Control':'no-store'});res.flushHeaders()
       if(current?.journal){await current.journal.connect(res,after);return}
       await tailRun(opts.store,opts.channel,owner!,id,res,after);return
@@ -164,7 +165,7 @@ export function createCloudServer(opts: Options) {
     if (!conversation || conversation.project_id !== project) throw new HttpError(404, 'Conversation not found')
     if (JSON.stringify(conversation.messages).length > 500000) throw new HttpError(413, 'Conversation context is full; start a new conversation')
     const runId = randomUUID()
-    if (!await opts.store.claim(owner, conversationId, runId)) throw new HttpError(409, 'This project is already running')
+    if (!await opts.store.claim(owner, conversationId, runId, session.session.id)) throw new HttpError(409, 'This project is already running')
     const run: Run = { user,owner,project,authSession: session.session.id, conversation: conversationId, controller: new AbortController() }
     runs.set(runId, run)
     const cancel = () => { run.controller.abort(); run.pending = undefined }

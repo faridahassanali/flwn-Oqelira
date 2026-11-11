@@ -23,10 +23,12 @@ export class Store {
     return (await this.pool.query("SELECT c.project_id FROM oq_run_approvals a JOIN oq_conversations c ON c.id=a.conversation_id WHERE a.id=$4 AND a.user_id=$1 AND a.session_id=$2 AND a.run_id=$3 AND c.active_run=a.run_id AND c.lease_until>now() AND a.allowed IS NULL AND a.expires_at>now()",[user,session,run,id])).rows[0] as {project_id:string}|undefined
   }
   async decideApproval(user:string,session:string,run:string,id:string,actor:string,allowed:boolean) {
-    return (await this.pool.query("UPDATE oq_run_approvals SET allowed=$6,decided_by=$5,decided_at=now() WHERE id=$4 AND user_id=$1 AND session_id=$2 AND run_id=$3 AND allowed IS NULL AND expires_at>now() RETURNING conversation_id,tool",[user,session,run,id,actor,allowed])).rows[0] as {conversation_id:string;tool:string}|undefined
+    return (await this.pool.query("UPDATE oq_run_approvals a SET allowed=$6,decided_by=$5,decided_at=now() FROM oq_conversations c WHERE c.id=a.conversation_id AND a.id=$4 AND a.user_id=$1 AND a.session_id=$2 AND a.run_id=$3 AND c.active_run=a.run_id AND c.lease_until>now() AND a.allowed IS NULL AND a.expires_at>now() RETURNING a.conversation_id,a.tool",[user,session,run,id,actor,allowed])).rows[0] as {conversation_id:string;tool:string}|undefined
   }
   /** Owner of a run that is live now, on any replica. Lets a replica without the stream accept its approval. */
   async activeRunOwner(user:string,run:string){return(await this.pool.query('SELECT c.user_id FROM oq_conversations c JOIN oq_projects p ON p.id=c.project_id LEFT JOIN member m ON m."organizationId"=p.organization_id AND m."userId"=$1 WHERE c.active_run=$2 AND c.lease_until>now() AND ((p.organization_id IS NULL AND p.user_id=$1) OR m.id IS NOT NULL) LIMIT 1',[user,run])).rows[0]?.user_id as string|undefined}
+  /** The initiating session for a live, visible run. Durable replay stays project-visible after release. */
+  async activeRunSession(user:string,run:string){return(await this.pool.query('SELECT c.active_session_id FROM oq_conversations c JOIN oq_projects p ON p.id=c.project_id LEFT JOIN member m ON m."organizationId"=p.organization_id AND m."userId"=$1 WHERE c.active_run=$2 AND c.lease_until>now() AND ((p.organization_id IS NULL AND p.user_id=$1) OR m.id IS NOT NULL) LIMIT 1',[user,run])).rows[0]?.active_session_id as string|undefined}
   /** Whether a run still holds its conversation lease; a stream waits on this for runs owned elsewhere. */
   async runActive(user:string,run:string){return(await this.pool.query('SELECT 1 FROM oq_conversations WHERE user_id=$1 AND active_run=$2 AND lease_until>now()',[user,run])).rows.length>0}
   async approvalDecision(user:string,run:string,id:string) {
@@ -56,13 +58,13 @@ export class Store {
     await this.pool.query('INSERT INTO oq_conversations(id,user_id,project_id,title,model) VALUES($1,$2,$3,$4,$5)', [id, user, project, title, model])
     return id
   }
-  async claim(user: string, id: string, run: string) {
+  async claim(user: string, id: string, run: string, session: string) {
     const client = await this.pool.connect()
     try {
       await client.query('BEGIN')
       const project = await client.query("UPDATE oq_projects SET active_run=$3,lease_until=now()+interval '2 minutes' WHERE user_id=$1 AND id=(SELECT project_id FROM oq_conversations WHERE user_id=$1 AND id=$2) AND (active_run IS NULL OR lease_until<now()) RETURNING id", [user, id, run])
       if (project.rowCount !== 1) { await client.query('ROLLBACK'); return false }
-      const result = await client.query("UPDATE oq_conversations SET active_run=$3,lease_until=now()+interval '2 minutes',status='running',updated_at=now() WHERE user_id=$1 AND id=$2 AND (active_run IS NULL OR lease_until<now()) RETURNING id", [user, id, run])
+      const result = await client.query("UPDATE oq_conversations SET active_run=$3,active_session_id=$4,lease_until=now()+interval '2 minutes',status='running',updated_at=now() WHERE user_id=$1 AND id=$2 AND (active_run IS NULL OR lease_until<now()) RETURNING id", [user, id, run, session])
       await client.query(result.rowCount === 1 ? 'COMMIT' : 'ROLLBACK')
       return result.rowCount === 1
     } catch (error) { await client.query('ROLLBACK'); throw error }
@@ -75,7 +77,7 @@ export class Store {
   async renew(user: string, id: string, run: string) {
     return (await this.pool.query("WITH p AS (UPDATE oq_projects SET lease_until=now()+interval '2 minutes' WHERE user_id=$1 AND active_run=$3 AND lease_until>now() RETURNING id) UPDATE oq_conversations SET lease_until=now()+interval '2 minutes' WHERE user_id=$1 AND id=$2 AND active_run=$3 AND lease_until>now() AND project_id IN (SELECT id FROM p)", [user, id, run])).rowCount === 1
   }
-  async release(user: string, id: string, run: string, status: string) { await this.pool.query('WITH c AS (UPDATE oq_conversations SET active_run=NULL,lease_until=NULL,status=$4,updated_at=now() WHERE user_id=$1 AND id=$2 AND active_run=$3 RETURNING project_id) UPDATE oq_projects SET active_run=NULL,lease_until=NULL WHERE user_id=$1 AND active_run=$3 AND id IN (SELECT project_id FROM c)', [user, id, run, status]) }
+  async release(user: string, id: string, run: string, status: string) { await this.pool.query('WITH c AS (UPDATE oq_conversations SET active_run=NULL,active_session_id=NULL,lease_until=NULL,status=$4,updated_at=now() WHERE user_id=$1 AND id=$2 AND active_run=$3 RETURNING project_id) UPDATE oq_projects SET active_run=NULL,lease_until=NULL WHERE user_id=$1 AND active_run=$3 AND id IN (SELECT project_id FROM c)', [user, id, run, status]) }
   async memory(user: string, project: string) { return (await this.pool.query('SELECT id,content,created_at FROM oq_memory WHERE user_id=$1 AND project_id=$2 ORDER BY created_at DESC LIMIT 100', [user, project])).rows as { id: string; content: string }[] }
   async remember(user: string, project: string, content: string) {
     const id = randomUUID()
