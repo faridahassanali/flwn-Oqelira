@@ -11,12 +11,20 @@ if (process.env.NODE_ENV === 'production' && (runtime !== 'runsc' || !image.incl
 const sandbox = new DockerSandbox(image, runtime)
 let active = 0
 const server = createServer((req, res) => {
-  const reply = (status: number, result: unknown) => { res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(result)) }
+  const reply = (status: number, result: unknown) => { res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Oqelira-Runtime': runtime ?? 'default' }); res.end(JSON.stringify(result)) }
   const controller = new AbortController()
   res.on('close', () => controller.abort())
   void (async () => {
     const supplied = createHash('sha256').update(req.headers.authorization ?? '').digest()
     if (!timingSafeEqual(expected, supplied)) { reply(401, { error: 'Unauthorized' }); return }
+    if (req.method === 'GET' && req.url === '/runtime') { reply(200, { runtime: runtime ?? 'default' }); return }
+    const project = req.url?.match(/^\/projects\/([0-9a-f-]+)$/i)?.[1]
+    if (req.method === 'DELETE' && project && UUID.test(project)) {
+      if (active >= 8) { reply(429, { error: 'Runner capacity reached' }); return }
+      active++
+      try { await sandbox.dispose(project); reply(200, { ok: true }) } finally { active-- }
+      return
+    }
     if (req.method !== 'POST' || req.url !== '/execute' || req.headers['content-type'] !== 'application/json') { reply(404, { error: 'Not found' }); return }
     if (active >= 8) { reply(429, { error: 'Runner capacity reached' }); return }
     active++

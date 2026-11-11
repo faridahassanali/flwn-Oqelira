@@ -4,11 +4,13 @@
  *   (repo root)  npm run prompt:eval
  *   Only some models:  PROMPT_EVAL_MODELS=gpt-6-sol npm run prompt:eval
  *
+ * Needs PROMPT_EVAL_RUNNER_URL (HTTPS), PROMPT_EVAL_RUNNER_TOKEN, and a runsc runner.
  * Needs FOUNDRY_KEY and FOUNDRY_ENDPOINT (see .env.example). Model ids come from OQELIRA_MODELS_JSON or the registry.
  * PROMPT_EVAL_SET=easy|hard|all (default easy), PROMPT_EVAL_REPEATS=n, PROMPT_EVAL_CONCURRENCY=n,
  * PROMPT_EVAL_OUT=path to also write the markdown table. Never prints credentials.
  */
 import fs from 'node:fs/promises'
+import { RunnerWorkspace } from '../eval/runner-workspace.js'
 import { DEFAULT_SYSTEM } from '../src/agent/prompt.js'
 import { loadEnvFiles } from '../src/config/env.js'
 import { createFoundry, foundryConfigFromEnv } from '../src/providers/foundry.js'
@@ -16,6 +18,12 @@ import { modelsFromEnv } from '../src/providers/registry.js'
 import { BASELINE_SYSTEM, HARD_TASKS, TASKS, renderResults, runPromptEval } from '../eval/prompt-eval.js'
 
 loadEnvFiles({ cwd: process.cwd() })
+
+// Validate isolation configuration before any model request.
+try { RunnerWorkspace.fromEnv() } catch (error) {
+  console.error(error instanceof Error ? error.message : 'Invalid runner configuration')
+  process.exit(2)
+}
 
 let config: ReturnType<typeof foundryConfigFromEnv>
 try {

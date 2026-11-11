@@ -47,3 +47,24 @@ test('with nothing configured elsewhere, a project .env still supplies no key; -
     assert.equal(process.env.FOUNDRY_KEY, 'k')
   })
 })
+
+
+test('runner connection settings load from an explicit trusted env file only', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oq-eval-env-'))
+  const keys = ['PROMPT_EVAL_RUNNER_URL', 'PROMPT_EVAL_RUNNER_TOKEN', 'OQELIRA_NO_ENV_FILES']
+  const saved = keys.map(key => process.env[key])
+  try {
+    for (const key of keys) delete process.env[key]
+    const file = path.join(root, '.env')
+    fs.writeFileSync(file, 'PROMPT_EVAL_RUNNER_URL=https://runner.example\nPROMPT_EVAL_RUNNER_TOKEN=fixture-only\n')
+    loadEnvFiles({ cwd: root })
+    assert.equal(process.env.PROMPT_EVAL_RUNNER_URL, undefined)
+    assert.equal(process.env.PROMPT_EVAL_RUNNER_TOKEN, undefined)
+    loadEnvFiles({ cwd: root, explicit: file })
+    assert.equal(process.env.PROMPT_EVAL_RUNNER_URL, 'https://runner.example')
+    assert.equal(process.env.PROMPT_EVAL_RUNNER_TOKEN, 'fixture-only')
+  } finally {
+    keys.forEach((key, i) => { if (saved[i] === undefined) delete process.env[key]; else process.env[key] = saved[i] })
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})

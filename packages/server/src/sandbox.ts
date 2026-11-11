@@ -12,6 +12,14 @@ export function dockerArgs(project: string, container: string, image: string, ru
 }
 export class DockerSandbox implements Sandbox {
   constructor(private readonly image = 'oqelira-worker:local', private readonly runtime?: string) {}
+  async dispose(project: string): Promise<void> {
+    if (!UUID.test(project)) throw new Error('Invalid sandbox identity')
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn('docker', ['volume', 'rm', '-f', `oq-project-${project}`], { windowsHide: true, stdio: 'ignore', timeout: 30_000 })
+      child.on('error', reject)
+      child.on('close', code => code === 0 ? resolve() : reject(new Error('Workspace cleanup failed')))
+    })
+  }
   tools(project: string): Tool[] {
     return builtinTools.map(tool => ({ ...tool, run: async (input, ctx) => {
       ctx.signal?.throwIfAborted()

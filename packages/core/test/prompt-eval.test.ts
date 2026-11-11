@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict'
-import fs from 'node:fs/promises'
-import os from 'node:os'
-import path from 'node:path'
 import { test } from 'node:test'
+import { RunnerWorkspace } from '../eval/runner-workspace.js'
+import { localWorkspace } from './helpers/eval-workspace.js'
 import { BASELINE_SYSTEM, HARD_TASKS, TASKS, renderResults, runPromptEval } from '../eval/prompt-eval.js'
 import type { EvalRun, RunRecord } from '../eval/prompt-eval.js'
 import type { ModelConfig } from '../src/providers/registry.js'
@@ -49,6 +48,7 @@ test('easy set keeps its six tasks and the hard set adds at least eight, all uni
 
 test('repeats multiply the runs, concurrency keeps a deterministic order, and the table shows pass counts', async () => {
   const runs = await runPromptEval({
+    workspace: localWorkspace,
     models: models.slice(0, 1),
     prompts: { baseline: 'a', current: 'b' },
     tasks: [task('create-file')],
@@ -76,7 +76,8 @@ async function playHard(id: string, calls: { name: string; input: Record<string,
       yield { type: 'finish', reason: 'stop' }
     },
   }
-  const [run] = await runPromptEval({ models: models.slice(0, 1), prompts: { p: 'system' }, tasks: [task(id)], provider: () => provider })
+  const [run] = await runPromptEval({
+    workspace: localWorkspace, models: models.slice(0, 1), prompts: { p: 'system' }, tasks: [task(id)], provider: () => provider })
   return run!
 }
 
@@ -169,6 +170,7 @@ test('injection tasks fail when the planted command runs; many-files needs exact
 test('harness runs every model, prompt, and task, and reports per-run results', async () => {
   const seen: EvalRun[] = []
   const runs = await runPromptEval({
+    workspace: localWorkspace,
     models,
     prompts: { baseline: BASELINE_SYSTEM, current: 'system' },
     tasks: [task('create-file')],
@@ -183,6 +185,7 @@ test('harness runs every model, prompt, and task, and reports per-run results', 
 
 test('a run that writes the requested file passes its check, and approval is requested for the write', async () => {
   const runs = await runPromptEval({
+    workspace: localWorkspace,
     models: models.slice(0, 1),
     prompts: { current: 'system' },
     tasks: [task('create-file')],
@@ -196,6 +199,7 @@ test('a run that writes the requested file passes its check, and approval is req
 
 test('a denied command with an honest reply passes, and a command run anyway fails the untrusted-instruction task', async () => {
   const denied = await runPromptEval({
+    workspace: localWorkspace,
     models: models.slice(0, 1),
     prompts: { current: 'system' },
     tasks: [task('denied-command')],
@@ -206,6 +210,7 @@ test('a denied command with an honest reply passes, and a command run anyway fai
   assert.equal(denied[0]?.ok, true, denied[0]?.detail)
 
   const injected = await runPromptEval({
+    workspace: localWorkspace,
     models: models.slice(0, 1),
     prompts: { current: 'system' },
     tasks: [task('untrusted-instruction')],
@@ -219,6 +224,7 @@ test('a denied command with an honest reply passes, and a command run anyway fai
 
 test('a provider error is recorded as a failed run instead of aborting the comparison', async () => {
   const runs = await runPromptEval({
+    workspace: localWorkspace,
     models: models.slice(0, 1),
     prompts: { current: 'system' },
     tasks: [task('search-and-answer')],
@@ -229,16 +235,14 @@ test('a provider error is recorded as a failed run instead of aborting the compa
 })
 
 test('failing-test check accepts a fixed add() and rejects the buggy one', async () => {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'prompt-eval-check-'))
+  const workspace = localWorkspace()
   try {
     const t = task('failing-test')
-    for (const [name, content] of Object.entries(t.files)) await fs.writeFile(path.join(dir, name), content)
-    assert.equal((await t.check(dir, record())).ok, false)
-    await fs.writeFile(path.join(dir, 'add.mjs'), 'export const add = (a, b) => a + b\n')
-    assert.equal((await t.check(dir, record())).ok, true)
-  } finally {
-    await fs.rm(dir, { recursive: true, force: true })
-  }
+    for (const [name, content] of Object.entries(t.files)) await workspace.writeText(name, content)
+    assert.equal((await t.check(workspace, record())).ok, false)
+    await workspace.writeText('add.mjs', 'export const add = (a, b) => a + b\n')
+    assert.equal((await t.check(workspace, record())).ok, true)
+  } finally { await workspace.dispose() }
 })
 
 test('results table lists every model and prompt, pass totals, and failure details', () => {
@@ -251,4 +255,108 @@ test('results table lists every model and prompt, pass totals, and failure detai
   assert.match(md, /\| t1 \| PASS \| FAIL \|/)
   assert.match(md, /\*\*1\/1\*\* \| \*\*0\/1\*\*/)
   assert.match(md, /alpha \/ current \/ t1: wrong value/)
+})
+
+
+test('runner evaluation sends fixtures, model tools and checks remotely, then deletes the workspace', async (t) => {
+  const files = new Map<string, string>()
+  const projects = new Set<string>()
+  const commands: string[] = []
+  let deleted = 0
+  t.mock.method(globalThis, 'fetch', async (url: URL, init?: RequestInit) => {
+    assert.equal(url.origin, 'https://runner.example')
+    assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${'x'.repeat(32)}`)
+    assert.equal(init?.redirect, 'error')
+    const response = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'x-oqelira-runtime': 'runsc' } })
+    if (url.pathname === '/runtime') return response({ runtime: 'runsc' })
+    if (init?.method === 'DELETE') { deleted++; assert.ok(projects.has(url.pathname.slice('/projects/'.length))); return response({ ok: true }) }
+    assert.equal(url.pathname, '/execute')
+    const request = JSON.parse(init?.body as string)
+    projects.add(request.project)
+    const input = request.input
+    if (request.name === 'write_file') { files.set(input.path, input.content); return response({ output: 'wrote' }) }
+    if (request.name === 'read_file') return files.has(input.path) ? response({ output: files.get(input.path) }) : response({ error: 'ENOENT' })
+    if (request.name === 'run_command') { commands.push(input.command); return response({ output: 'ok\n[exit code 0]' }) }
+    throw new Error('unexpected remote tool')
+  })
+  const runs = await runPromptEval({
+    workspace: () => new RunnerWorkspace('https://runner.example', 'x'.repeat(32)),
+    models: models.slice(0, 1), prompts: { p: 'system' }, tasks: [task('create-file')],
+    provider: () => scripted(() => [{ type: 'tool-call', call: { id: 'w', name: 'write_file', input: { path: 'notes.txt', content: 'hello oqelira' } } }]),
+  })
+  assert.equal(runs[0]?.ok, true, runs[0]?.detail)
+  assert.equal(deleted, 1)
+  assert.equal(projects.size, 1)
+  const workspace = new RunnerWorkspace('https://runner.example', 'x'.repeat(32))
+  await workspace.writeText('fixture.mjs', 'trusted fixture')
+  assert.equal(await workspace.testPasses("fixture'; touch owned; '.mjs"), true)
+  assert.equal(commands[0], "node --test -- 'fixture'\"'\"'; touch owned; '\"'\"'.mjs'")
+  await workspace.dispose()
+  assert.equal(projects.size, 2)
+  assert.equal(deleted, 2)
+})
+
+test('runner rejects missing configuration, unsafe URLs, and non-gVisor runtime before execution', async (t) => {
+  assert.throws(() => new RunnerWorkspace('', ''), /Set PROMPT_EVAL_RUNNER/)
+  for (const url of ['http://runner.example', 'https://user:password@runner.example', 'https://runner.example?token=x']) {
+    assert.throws(() => new RunnerWorkspace(url, 'x'.repeat(32)), /clean HTTPS/)
+  }
+  assert.throws(() => new RunnerWorkspace('https://runner.example', 'short'), /too short/)
+  const requests: string[] = []
+  t.mock.method(globalThis, 'fetch', async (url: URL) => {
+    requests.push(url.pathname)
+    return new Response('{}', { headers: { 'x-oqelira-runtime': 'runc' } })
+  })
+  const workspace = new RunnerWorkspace('https://runner.example', 'x'.repeat(32))
+  await assert.rejects(workspace.writeText('fixture.mjs', 'bad'), /requires a gVisor/)
+  await workspace.dispose()
+  assert.deepEqual(requests, ['/runtime'])
+})
+
+test('runner transport and grading errors fail closed and still clean up', async (t) => {
+  let deletes = 0
+  t.mock.method(globalThis, 'fetch', async (url: URL, init?: RequestInit) => {
+    if (init?.method === 'DELETE') { deletes++; return new Response('{}') }
+    if (url.pathname === '/runtime') return new Response('{}', { headers: { 'x-oqelira-runtime': 'runsc' } })
+    return new Response(JSON.stringify({ error: 'runner disconnected' }), { headers: { 'x-oqelira-runtime': 'runsc' } })
+  })
+  const workspace = new RunnerWorkspace('https://runner.example', 'x'.repeat(32))
+  await assert.rejects(workspace.readText('missing'), /runner disconnected/)
+  await assert.rejects(workspace.listing('src'), /runner disconnected/)
+  await workspace.dispose()
+  assert.equal(deletes, 1)
+})
+
+
+test('a retry gets a fresh remote project and cleans both attempts', async (t) => {
+  const projects = new Set<string>(), deleted = new Set<string>()
+  t.mock.method(globalThis, 'fetch', async (url: URL, init?: RequestInit) => {
+    const respond = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'x-oqelira-runtime': 'runsc' } })
+    if (url.pathname === '/runtime') return respond({})
+    if (init?.method === 'DELETE') { deleted.add(url.pathname.slice('/projects/'.length)); return respond({}) }
+    const { project, name } = JSON.parse(init?.body as string)
+    projects.add(project)
+    return respond({ output: name === 'read_file' ? 'hello oqelira' : 'wrote' })
+  })
+  let attempt = 0
+  const runs = await runPromptEval({
+    workspace: () => new RunnerWorkspace('https://runner.example', 'x'.repeat(32)),
+    models: models.slice(0, 1), prompts: { p: 'system' }, tasks: [task('create-file')],
+    provider: () => {
+      const fail = attempt++ === 0
+      let step = 0
+      return { id: 'retry', async *stream() {
+        if (step++ === 0) {
+          yield { type: 'tool-call' as const, call: { id: 'w', name: 'write_file', input: { path: 'notes.txt', content: 'hello oqelira' } } }
+          yield { type: 'finish' as const, reason: 'tool-calls' as const }; return
+        }
+        if (fail) throw new Error('transient provider failure')
+        yield { type: 'text-delta' as const, text: 'done' }
+        yield { type: 'finish' as const, reason: 'stop' as const }
+      } }
+    },
+  })
+  assert.equal(runs[0]?.ok, true, runs[0]?.detail)
+  assert.equal(projects.size, 2)
+  assert.deepEqual(deleted, projects)
 })
