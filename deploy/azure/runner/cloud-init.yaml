@@ -167,13 +167,15 @@ write_files:
         fi
         grep -qxF "$id:$d" /etc/projects || echo "$id:$d" >> /etc/projects
         # Trust the directory, not the files: a volume that was deleted and recreated under the same name has the
-        # same /etc/projid entry but a fresh directory with no project. Re-apply whenever the real id differs.
+        # same /etc/projid entry but a fresh directory with no project. Re-apply its project assignment whenever
+        # the real id differs. Limits are applied every pass too: this heals volumes created before an inode limit
+        # was introduced, and propagates a deliberate quota configuration change.
         cur=$(xfs_io -r -c lsproj "$d" 2>/dev/null | awk '{print $3}')
         if [ "$cur" != "$id" ]; then
           # -s sets the project (with inherit flag) on the whole existing tree and new files inherit it.
           xfs_quota -x -c "project -s $name" "$ROOT" >/dev/null
-          xfs_quota -x -c "limit -p bsoft=${QUOTA_GIB}g bhard=${QUOTA_GIB}g isoft=${INODE_LIMIT:-1000000} ihard=${INODE_LIMIT:-1000000} $name" "$ROOT"
         fi
+        xfs_quota -x -c "limit -p bsoft=${QUOTA_GIB}g bhard=${QUOTA_GIB}g isoft=${INODE_LIMIT:-1000000} ihard=${INODE_LIMIT:-1000000} $name" "$ROOT" >/dev/null
       done
 
   - path: /usr/local/sbin/oqelira-backup.sh
