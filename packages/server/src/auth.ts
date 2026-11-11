@@ -1,4 +1,5 @@
 import { betterAuth } from 'better-auth'
+import {APIError,createAuthMiddleware} from 'better-auth/api'
 import {organization} from 'better-auth/plugins'
 import {defaultAc,defaultRoles} from 'better-auth/plugins/organization/access'
 import type { Pool } from 'pg'
@@ -13,8 +14,17 @@ export function createAuth(pool: Pool, config: ReturnType<typeof serverConfig>, 
     trustedOrigins: [config.baseURL],
     emailAndPassword: { enabled: true, disableSignUp: !config.signup, minPasswordLength: 12, maxPasswordLength: 128, requireEmailVerification:config.requireEmailVerification, revokeSessionsOnPasswordReset:true,resetPasswordTokenExpiresIn:900,...(send?{sendResetPassword:async({user,url}:{user:{email:string};url:string})=>send({to:user.email,url,kind:'reset'})}:{}) },
     ...(send?{emailVerification:{sendOnSignUp:true,sendOnSignIn:true,autoSignInAfterVerification:false,expiresIn:900,sendVerificationEmail:async({user,url}:{user:{email:string};url:string})=>send({to:user.email,url,kind:'verify'})}}:{}),
-    account:{accountLinking:{enabled:true,disableImplicitLinking:true,allowDifferentEmails:false,allowUnlinkingAll:false}},
-    socialProviders:{...(config.google?{google:{...config.google,disableSignUp:!config.signup,scope:['openid','email','profile']}}:{}),...(config.github?{github:{...config.github,disableSignUp:!config.signup,scope:['read:user','user:email']}}:{})},
+    // GitHub is a repository connection, not a login method. Explicit link-social needs a session; implicit linking stays off.
+    // Tokens are stored encrypted (AES-GCM keyed from the auth secret) and only read server-side through getAccessToken.
+    account:{encryptOAuthTokens:true,accountLinking:{enabled:true,disableImplicitLinking:true,allowDifferentEmails:true,allowUnlinkingAll:false,trustedProviders:['github']}},
+    hooks:{before:createAuthMiddleware(async ctx=>{
+      const provider=(ctx.body as {provider?:unknown}|undefined)?.provider
+      if(ctx.path==='/sign-in/social'&&provider==='github')throw new APIError('FORBIDDEN',{message:'GitHub is a connection, not a sign-in method'})
+      if(ctx.path==='/link-social'&&provider!=='github')throw new APIError('FORBIDDEN',{message:'Only GitHub can be connected'})
+      // Provider tokens must never reach a browser; server code calls auth.api.getAccessToken without a request.
+      if(ctx.request&&['/get-access-token','/refresh-token','/account-info'].includes(ctx.path))throw new APIError('FORBIDDEN',{message:'Not available'})
+    })},
+    socialProviders:{...(config.google?{google:{...config.google,disableSignUp:!config.signup,scope:['openid','email','profile']}}:{}),...(config.github?{github:{...config.github,disableSignUp:true,scope:['read:user','user:email']}}:{})},
     plugins:[organization({organizationLimit:10,membershipLimit:50,invitationLimit:50,allowUserToCreateOrganization:user=>user.emailVerified,requireEmailVerificationOnInvitation:true,roles:{...defaultRoles,viewer:defaultAc.newRole({ac:['read']})},sendInvitationEmail:async invitation=>{
       if(!send)throw new Error('Configure account email delivery before sending invitations')
       await send({to:invitation.email,url:config.baseURL+'/?invitation='+encodeURIComponent(invitation.id),kind:'invite'})

@@ -52,9 +52,9 @@ export function mountWorkspace(root: HTMLElement): () => void {
   let editing: 'none' | 'edit' | 'new' = 'none'
   let gitRaw: string | undefined, gitLoading = false, gitError = ''
   let ghStatus: GithubStatus | undefined, ghLoading = false, ghError = '', ghReconnect = false, ghConfirm = false, ghBusy = false
-  const ghUi = (): GithubUi => ({ status: ghStatus, capable: config?.githubConnect, loading: ghLoading, error: ghError, reconnect: ghReconnect, confirming: ghConfirm, busy: ghBusy })
+  const ghUi = (): GithubUi => ({ status: ghStatus, capable: config?.auth?.githubConnect, loading: ghLoading, error: ghError, reconnect: ghReconnect, confirming: ghConfirm, busy: ghBusy })
   async function loadGithub() {
-    if (config?.mode !== 'server' || ghLoading || config.githubConnect === false) return
+    if (config?.mode !== 'server' || ghLoading || config.auth?.githubConnect === false) return
     ghLoading = true; ghError = ''; render()
     try { ghStatus = await githubStatus() } catch (e) { ghError = describeFailure(e, 'Could not check GitHub') }
     ghLoading = false; render()
