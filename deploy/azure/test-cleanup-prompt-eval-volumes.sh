@@ -7,7 +7,7 @@ docker() {
       if [[ "$4" == '{{.CreatedAt}}' ]]; then
         [[ "$5" == *000002 ]] && echo recent || echo old
       else
-        [[ "$5" == *000004 ]] && echo work || echo .
+        [[ "$5" == *000004 ]] && echo deploy || echo .
       fi ;;
     'ps -aq') [[ "$4" == *000003 ]] && echo attached || true ;;
     'volume rm') echo "REMOVED:$4" ;;
@@ -15,7 +15,7 @@ docker() {
   esac
 }
 date() { [[ "${1:-}" == +%s ]] && echo 200000 || { [[ "$2" == recent ]] && echo 199000 || echo 1000; }; }
-stat() { [[ "$4" == work ]] && echo 199000 || echo 1000; }
+stat() { [[ "$4" == deploy ]] && echo 199000 || echo 1000; }
 export -f docker date stat
 output=$(bash deploy/azure/cleanup-prompt-eval-volumes.sh --apply)
 [[ "$output" == 'REMOVED:oq-project-e7a1e7a1-e7a1-4000-8000-000000000001' ]]
