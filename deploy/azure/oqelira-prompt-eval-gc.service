@@ -1,0 +1,15 @@
+[Unit]
+Description=Remove expired prompt-evaluation volumes only
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RuntimeDirectory=oqelira-prompt-eval-gc
+Environment=DOCKER_CONFIG=/run/oqelira-prompt-eval-gc
+UMask=0077
+ExecStart=/usr/local/sbin/oqelira-prompt-eval-gc --apply
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict

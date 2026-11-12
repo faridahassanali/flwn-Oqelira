@@ -5,7 +5,7 @@ import path from 'node:path'
 import { test } from 'node:test'
 import { loadEnvFiles } from '../src/config/env.js'
 
-const KEYS = ['FOUNDRY_KEY', 'FOUNDRY_BASE_URL', 'FOUNDRY_ENDPOINT', 'FOUNDRY_MODELS', 'OQELIRA_MODEL', 'OQELIRA_ENV', 'TAVILY_API_KEY', 'OQELIRA_NO_ENV_FILES', 'HOME']
+const KEYS = ['FOUNDRY_KEY', 'FOUNDRY_BASE_URL', 'FOUNDRY_ENDPOINT', 'FOUNDRY_MODELS', 'OQELIRA_MODEL', 'OQELIRA_ENV', 'TAVILY_API_KEY', 'OQELIRA_NO_ENV_FILES', 'HOME', 'USERPROFILE', 'PROMPT_EVAL_RUNNER_URL', 'PROMPT_EVAL_RUNNER_TOKEN']
 
 /** Runs with a clean environment and an empty HOME so nothing real leaks in or out. */
 function sandbox(fn: (dirs: { home: string; project: string }) => void) {
@@ -14,6 +14,7 @@ function sandbox(fn: (dirs: { home: string; project: string }) => void) {
   const project = fs.mkdtempSync(path.join(os.tmpdir(), 'oq-proj-'))
   for (const k of KEYS) delete process.env[k]
   process.env.HOME = home
+  process.env.USERPROFILE = home
   try { fn({ home, project }) } finally {
     for (const k of KEYS) if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]
     fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(project, { recursive: true, force: true })
@@ -45,5 +46,19 @@ test('with nothing configured elsewhere, a project .env still supplies no key; -
     assert.equal(process.env.FOUNDRY_KEY, undefined)
     loadEnvFiles({ cwd: project, explicit: path.join(project, '.env') })
     assert.equal(process.env.FOUNDRY_KEY, 'k')
+  })
+})
+
+
+test('runner connection settings load from an explicit trusted env file only', () => {
+  sandbox(({ project }) => {
+    const file = path.join(project, '.env')
+    fs.writeFileSync(file, 'PROMPT_EVAL_RUNNER_URL=https://runner.example\nPROMPT_EVAL_RUNNER_TOKEN=fixture-only\n')
+    loadEnvFiles({ cwd: project })
+    assert.equal(process.env.PROMPT_EVAL_RUNNER_URL, undefined)
+    assert.equal(process.env.PROMPT_EVAL_RUNNER_TOKEN, undefined)
+    loadEnvFiles({ cwd: project, explicit: file })
+    assert.equal(process.env.PROMPT_EVAL_RUNNER_URL, 'https://runner.example')
+    assert.equal(process.env.PROMPT_EVAL_RUNNER_TOKEN, 'fixture-only')
   })
 })

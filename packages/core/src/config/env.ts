@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 /** Only these prefixes are taken from .env files, so a project's unrelated secrets never enter our process. */
-const ALLOWED = /^(FOUNDRY_|OQELIRA_|FLWN_|DATA_|TAVILY_API_KEY$)/
+const ALLOWED = /^(FOUNDRY_|OQELIRA_|PROMPT_EVAL_|FLWN_|DATA_|TAVILY_API_KEY$)/
 
 /**
  * A project's own ./.env is untrusted: a cloned repo could set FOUNDRY_BASE_URL and receive the key you configured
