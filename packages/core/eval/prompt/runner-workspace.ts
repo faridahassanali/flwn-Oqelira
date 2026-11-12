@@ -20,6 +20,24 @@ const quote = (value: string) => "'" + value.replaceAll("'", "'\"'\"'") + "'"
 const existenceProbe = `const fs=require("node:fs"),p=require("node:path");const f=p.resolve("/workspace",process.argv[1]);if(f!=="/workspace"&&!f.startsWith("/workspace/"))throw new Error("Path outside fixture");try{fs.accessSync(f);console.log(true)}catch(e){if(e.code!=="ENOENT")throw e;console.log(false)}`
 const clearFixture = `node -e 'const fs=require("node:fs");const root="/workspace";for(const name of fs.readdirSync(root)){fs.rmSync(root+"/"+name,{recursive:true,force:true})}if(fs.readdirSync(root).length)process.exit(1)'`
 
+function retryDelay(response: Response, attempt: number): number {
+  const retryAfter = response.headers.get('retry-after')?.trim()
+  if (retryAfter && /^\d+(?:\.\d+)?$/.test(retryAfter)) return Math.min(Math.ceil(Number(retryAfter) * 1_000), 60_000)
+  if (retryAfter) {
+    const date = Date.parse(retryAfter)
+    if (!Number.isNaN(date)) return Math.min(Math.max(0, date - Date.now()), 60_000)
+  }
+  return Math.min(1_000 * 2 ** attempt, 15_000)
+}
+
+function wait(ms: number, signal: AbortSignal): Promise<void> {
+  if (ms === 0) return Promise.resolve()
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms)
+    signal.addEventListener('abort', () => { clearTimeout(timer); reject(signal.reason) }, { once: true })
+  })
+}
+
 /** A runner-only tool set for live evaluation. No fixture operation touches the caller's filesystem. */
 export class RunnerWorkspace implements EvalWorkspace {
   static fromEnv(): RunnerWorkspace {
@@ -46,18 +64,26 @@ export class RunnerWorkspace implements EvalWorkspace {
 
   private async execute(name: string, input: unknown, ctx: ToolContext = { cwd: '/workspace' }): Promise<string> {
     this.used = true
-    const response = await fetch(new URL('/execute', this.url), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
-      body: JSON.stringify({ project: this.project, name, input }),
-      signal: ctx.signal ? AbortSignal.any([ctx.signal, AbortSignal.timeout(95_000)]) : AbortSignal.timeout(95_000),
-      redirect: 'error',
-    })
-    if (!response.ok) throw new Error(`Isolated evaluation runner is unavailable (HTTP ${response.status})`)
-    const result = await response.json() as { output?: string; error?: string }
-    if (result.error) throw new Error(result.error)
-    if (typeof result.output !== 'string') throw new Error('Invalid isolated runner response')
-    return result.output.slice(0, 30_000)
+    const signal = ctx.signal ? AbortSignal.any([ctx.signal, AbortSignal.timeout(95_000)]) : AbortSignal.timeout(95_000)
+    for (let attempt = 0; attempt < 7; attempt++) {
+      const response = await fetch(new URL('/execute', this.url), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
+        body: JSON.stringify({ project: this.project, name, input }),
+        signal,
+        redirect: 'error',
+      })
+      if (response.status === 429 && attempt < 6) {
+        await wait(retryDelay(response, attempt), signal)
+        continue
+      }
+      if (!response.ok) throw new Error(`Isolated evaluation runner is unavailable (HTTP ${response.status})`)
+      const result = await response.json() as { output?: string; error?: string }
+      if (result.error) throw new Error(result.error)
+      if (typeof result.output !== 'string') throw new Error('Invalid isolated runner response')
+      return result.output.slice(0, 30_000)
+    }
+    throw new Error('Isolated evaluation runner is unavailable after retries')
   }
 
   async initialize(): Promise<void> { await (this.verified ??= this.verify()) }

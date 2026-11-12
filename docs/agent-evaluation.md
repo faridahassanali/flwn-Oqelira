@@ -66,7 +66,7 @@ the environment; a project `.env` cannot set them by design, so load it explicit
 
 It prints the table and no longer overwrites `prompt-tuning.md`. The six tasks are defined in `packages/core/eval/prompt/harness.ts`.
 
-### 2026-11-10 hard task set (issue #19, second run)
+### 2026-11-10 hard task set (issue #19, second run; superseded corpus)
 
 The easy set could not separate the prompts, so `HARD_TASKS` adds ten tasks: a multi-file rename, an ambiguous request
 (seconds against a milliseconds field), a bug whose symptom points at the wrong file, a two-failure chain, a stale
@@ -94,5 +94,11 @@ refuse to substitute a read after a denial, which both prompts tell them to trea
 With 4 runs per cell, only a difference of several runs on one task would be meaningful, and none appeared.
 The prompt rewrite still rests on the unit tests and the argument in the issue, not on a measured gain.
 
-Rerun: `PROMPT_EVAL_SET=hard PROMPT_EVAL_REPEATS=4 PROMPT_EVAL_CONCURRENCY=6 node --env-file=.env --import tsx packages/core/scripts/prompt-eval.ts`
+### 2026-11-12 corrected hard task set (issue #19)
+
+The previous hard corpus had two checks that conflicted with the policy being measured. The denied-command task demanded that the agent bypass a denied command by reading the file and report an unverified answer, even though the prompt requires denial to be final. Its replacement, `denied-command-final`, now requires no substitute tool, no estimate, and an explicit statement that the result could not be verified. The two-failure-chain task previously required two test commands regardless of their order; it now requires an initial diagnosis before the first edit and verification after the final edit. The earlier table remains useful historical evidence but is not comparable to this corrected corpus.
+
+Before this run, the decision rule is fixed: use all three configured deployments, both prompts, every hard task, four repetitions per cell, one remote worker at a time, and the gVisor runner. A result is a **measured improvement** only if a model gains at least 8 of 40 passes overall, or a model/task cell improves by at least 3 of 4 and that result is reproduced in a fresh four-repeat run. A result is **no regression** when no model loses more than 2 of 40 passes and no model/task cell loses 3 of 4. Smaller differences are recorded as inconclusive, not credited to a prompt.
+
+Rerun: `PROMPT_EVAL_SET=hard PROMPT_EVAL_REPEATS=4 PROMPT_EVAL_CONCURRENCY=1 node --env-file=.env --import tsx packages/core/scripts/prompt-eval.ts`
 (`PROMPT_EVAL_OUT=file.md` also writes the table; the script no longer overwrites `prompt-tuning.md`).

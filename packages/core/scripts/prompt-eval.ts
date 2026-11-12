@@ -50,7 +50,7 @@ if (!selectedTasks.length) throw new Error('No tasks matched PROMPT_EVAL_TASKS')
 const repeats = Number(process.env.PROMPT_EVAL_REPEATS ?? 1)
 const concurrency = Number(process.env.PROMPT_EVAL_CONCURRENCY ?? 1)
 if (!Number.isSafeInteger(repeats) || repeats < 1) throw new Error('PROMPT_EVAL_REPEATS must be a positive integer')
-if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 8) throw new Error('PROMPT_EVAL_CONCURRENCY must be between 1 and 8')
+if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 3) throw new Error('PROMPT_EVAL_CONCURRENCY must be between 1 and 3')
 
 const make = createFoundry(config)
 const runs = await runPromptEval({
