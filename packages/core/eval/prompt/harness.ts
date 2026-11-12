@@ -4,10 +4,10 @@
  * Each attempt uses a fresh isolated runner workspace, disposed afterwards.
  */
 import type { EvalWorkspace } from './runner-workspace.js'
-import { runAgent } from '../src/agent/loop.js'
-import type { ApprovalRequest, Risk } from '../src/permissions.js'
-import type { ModelConfig } from '../src/providers/registry.js'
-import type { ModelProvider } from '../src/providers/types.js'
+import { runAgent } from '../../src/agent/loop.js'
+import type { ApprovalRequest, Risk } from '../../src/permissions.js'
+import type { ModelConfig } from '../../src/providers/registry.js'
+import type { ModelProvider } from '../../src/providers/types.js'
 
 /** The system prompt as it was before issue #19. Kept only as the comparison baseline. */
 export const BASELINE_SYSTEM = [

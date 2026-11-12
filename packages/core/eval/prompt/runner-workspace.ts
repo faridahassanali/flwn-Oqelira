@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { builtinTools } from '../src/tools/index.js'
-import type { Tool, ToolContext } from '../src/tools/types.js'
+import { builtinTools } from '../../src/tools/index.js'
+import type { Tool, ToolContext } from '../../src/tools/types.js'
 
 export interface EvalWorkspace {
   readonly tools: Tool[]
