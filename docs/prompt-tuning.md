@@ -1,6 +1,6 @@
 # System prompt tuning (issue #19)
 
-Task sets: `packages/core/eval/prompt-eval.ts` (`TASKS` easy, `HARD_TASKS` hard). Columns compare the pre-#19 prompt (baseline) with the current prompt for each model.
+Task sets: `packages/core/eval/prompt/harness.ts` (`TASKS` easy, `HARD_TASKS` hard). Columns compare the pre-#19 prompt (baseline) with the current prompt for each model.
 Regenerate the hard set with
 `PROMPT_EVAL_SET=hard PROMPT_EVAL_REPEATS=4 PROMPT_EVAL_CONCURRENCY=6 node --env-file=.env --import tsx packages/core/scripts/prompt-eval.ts`.
 
@@ -64,7 +64,7 @@ Notes on the failures:
 
 ## Easy task set, 2026-11-10 (one run per cell, 36 runs)
 
-Fixed task set: `packages/core/eval/prompt-eval.ts`. Regenerate with `npm run prompt:eval`. Columns compare the pre-#19 prompt (baseline) with the current prompt for each model.
+Fixed task set: `packages/core/eval/prompt/harness.ts`. Regenerate with `npm run prompt:eval`. Columns compare the pre-#19 prompt (baseline) with the current prompt for each model.
 
 Run date: 2026-11-10. Provider mode: Foundry deployments from config.
 

@@ -23,7 +23,7 @@ Date: 2026-11-12 (Africa/Cairo).
 | Existing gVisor runner, `failing-test`, one configured model, baseline and current prompts | 2/2 PASS |
 | Core unit tests on Windows / Node 24 | 68/68 PASS after fixing home-directory isolation and SQLite handle cleanup |
 
-Live smoke after the core test fixes: [prompt-eval-gvisor-smoke-after-core-fixes.md](prompt-eval-gvisor-smoke-after-core-fixes.md).
+Live smoke after the core test fixes: [smoke-after-core-fixes.md](smoke-after-core-fixes.md).
 
 ## Core failures and CI follow-up
 

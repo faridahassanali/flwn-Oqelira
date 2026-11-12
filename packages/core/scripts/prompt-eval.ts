@@ -10,12 +10,12 @@
  * PROMPT_EVAL_OUT=path to also write the markdown table. Never prints credentials.
  */
 import fs from 'node:fs/promises'
-import { RunnerWorkspace } from '../eval/runner-workspace.js'
+import { RunnerWorkspace } from '../eval/prompt/runner-workspace.js'
 import { DEFAULT_SYSTEM } from '../src/agent/prompt.js'
 import { loadEnvFiles } from '../src/config/env.js'
 import { createFoundry, foundryConfigFromEnv } from '../src/providers/foundry.js'
 import { modelsFromEnv } from '../src/providers/registry.js'
-import { BASELINE_SYSTEM, HARD_TASKS, TASKS, renderResults, runPromptEval } from '../eval/prompt-eval.js'
+import { BASELINE_SYSTEM, HARD_TASKS, TASKS, renderResults, runPromptEval } from '../eval/prompt/harness.js'
 
 loadEnvFiles({ cwd: process.cwd() })
 

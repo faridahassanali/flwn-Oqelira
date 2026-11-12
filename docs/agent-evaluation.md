@@ -64,7 +64,7 @@ the environment; a project `.env` cannot set them by design, so load it explicit
     node --env-file=.env --import tsx packages/core/scripts/prompt-eval.ts
     PROMPT_EVAL_MODELS=gpt-6-sol ...   # one deployment
 
-It prints the table and no longer overwrites `prompt-tuning.md`. The six tasks are defined in `packages/core/eval/prompt-eval.ts`.
+It prints the table and no longer overwrites `prompt-tuning.md`. The six tasks are defined in `packages/core/eval/prompt/harness.ts`.
 
 ### 2026-11-10 hard task set (issue #19, second run)
 

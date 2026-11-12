@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { RunnerWorkspace } from '../eval/runner-workspace.js'
+import { RunnerWorkspace } from '../eval/prompt/runner-workspace.js'
 import { localWorkspace } from './helpers/eval-workspace.js'
-import { BASELINE_SYSTEM, HARD_TASKS, TASKS, renderResults, runPromptEval } from '../eval/prompt-eval.js'
-import type { EvalRun, RunRecord } from '../eval/prompt-eval.js'
+import { BASELINE_SYSTEM, HARD_TASKS, TASKS, renderResults, runPromptEval } from '../eval/prompt/harness.js'
+import type { EvalRun, RunRecord } from '../eval/prompt/harness.js'
 import type { ModelConfig } from '../src/providers/registry.js'
 import type { ModelEvent, ModelProvider, ModelRequest } from '../src/providers/types.js'
 

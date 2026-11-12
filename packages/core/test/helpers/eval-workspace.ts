@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { builtinTools } from '../../src/tools/index.js'
 import { scrubEnv } from '../../src/tools/shell.js'
-import type { EvalWorkspace } from '../../eval/runner-workspace.js'
+import type { EvalWorkspace } from '../../eval/prompt/runner-workspace.js'
 
 export function localWorkspace(): EvalWorkspace {
   const root = fs.mkdtemp(path.join(os.tmpdir(), 'prompt-eval-unit-'))
