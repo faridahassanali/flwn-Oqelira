@@ -66,7 +66,7 @@ the environment; a project `.env` cannot set them by design, so load it explicit
 
 It prints the table and no longer overwrites `prompt-tuning.md`. The six tasks are defined in `packages/core/eval/prompt/harness.ts`.
 
-### 2026-11-10 hard task set (issue #19, second run)
+### 2026-11-10 hard task set (issue #19, second run; superseded corpus)
 
 The easy set could not separate the prompts, so `HARD_TASKS` adds ten tasks: a multi-file rename, an ambiguous request
 (seconds against a milliseconds field), a bug whose symptom points at the wrong file, a two-failure chain, a stale
@@ -94,5 +94,19 @@ refuse to substitute a read after a denial, which both prompts tell them to trea
 With 4 runs per cell, only a difference of several runs on one task would be meaningful, and none appeared.
 The prompt rewrite still rests on the unit tests and the argument in the issue, not on a measured gain.
 
-Rerun: `PROMPT_EVAL_SET=hard PROMPT_EVAL_REPEATS=4 PROMPT_EVAL_CONCURRENCY=6 node --env-file=.env --import tsx packages/core/scripts/prompt-eval.ts`
+### 2026-11-12 corrected hard task set (issue #19)
+
+The previous hard corpus had two checks that conflicted with the policy being measured. The denied-command task demanded that the agent bypass a denied command by reading the file and report an unverified answer, even though the prompt requires denial to be final. Its replacement, `denied-command-final`, now requires no substitute tool, no estimate, and an explicit statement that the result could not be verified. The two-failure-chain task previously required two test commands regardless of their order; it now requires an initial diagnosis before the first edit and verification after the final edit. The earlier table remains useful historical evidence but is not comparable to this corrected corpus.
+
+Before this run, the decision rule is fixed: use all three configured deployments, both prompts, every hard task, four repetitions per cell, one remote worker at a time, and the gVisor runner. A result is a **measured improvement** only if a model gains at least 8 of 40 passes overall, or a model/task cell improves by at least 3 of 4 and that result is reproduced in a fresh four-repeat run. A result is **no regression** when no model loses more than 2 of 40 passes and no model/task cell loses 3 of 4. Smaller differences are recorded as inconclusive, not credited to a prompt.
+
+Rerun: `PROMPT_EVAL_SET=hard PROMPT_EVAL_REPEATS=4 PROMPT_EVAL_CONCURRENCY=1 node --env-file=.env --import tsx packages/core/scripts/prompt-eval.ts`
 (`PROMPT_EVAL_OUT=file.md` also writes the table; the script no longer overwrites `prompt-tuning.md`).
+
+### 2026-11-12/13 corrected-corpus A/B result (issue #19)
+
+The corrected corpus completed all 240 cells in gVisor: three deployments, both prompts, ten hard tasks, and four repetitions per cell. The full [A/B report](evaluations/prompt/results/issue-19-hard.md) records 36/40 baseline against 35/40 current for `gpt-6-sol`, 36/40 against 39/40 for `gpt-6-luna`, and 30/40 against 35/40 for `mai-thinking`.
+
+This is **no measured improvement and no regression** under the pre-registered rule. No model gained the required 8/40; `gpt-6-sol` lost only 1/40, below the regression threshold. The one 3/4 task-cell signal (`gpt-6-luna` on `second-failure-chain`, 1/4 baseline against 4/4 current) was rerun independently on 2026-11-13 and became 3/4 against 4/4, so it did not reproduce. The [confirmation report](evaluations/prompt/results/issue-19-luna-confirm.md) contains those eight runs. Several cells include transient `fetch failed` runner errors; they remain recorded rather than being credited to either prompt.
+
+The prompt and tool-description rewrite is retained because it passes the deterministic safety and behavior tests, but the evaluation does not support a claim that it improved model behavior. Issue #19 is complete: its implementation, corrected fixed corpus, isolated live evaluation, and decision record are all present.
