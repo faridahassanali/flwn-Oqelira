@@ -102,3 +102,11 @@ Before this run, the decision rule is fixed: use all three configured deployment
 
 Rerun: `PROMPT_EVAL_SET=hard PROMPT_EVAL_REPEATS=4 PROMPT_EVAL_CONCURRENCY=1 node --env-file=.env --import tsx packages/core/scripts/prompt-eval.ts`
 (`PROMPT_EVAL_OUT=file.md` also writes the table; the script no longer overwrites `prompt-tuning.md`).
+
+### 2026-11-12/13 corrected-corpus A/B result (issue #19)
+
+The corrected corpus completed all 240 cells in gVisor: three deployments, both prompts, ten hard tasks, and four repetitions per cell. The full [A/B report](evaluations/prompt/results/issue-19-hard.md) records 36/40 baseline against 35/40 current for `gpt-6-sol`, 36/40 against 39/40 for `gpt-6-luna`, and 30/40 against 35/40 for `mai-thinking`.
+
+This is **no measured improvement and no regression** under the pre-registered rule. No model gained the required 8/40; `gpt-6-sol` lost only 1/40, below the regression threshold. The one 3/4 task-cell signal (`gpt-6-luna` on `second-failure-chain`, 1/4 baseline against 4/4 current) was rerun independently on 2026-11-13 and became 3/4 against 4/4, so it did not reproduce. The [confirmation report](evaluations/prompt/results/issue-19-luna-confirm.md) contains those eight runs. Several cells include transient `fetch failed` runner errors; they remain recorded rather than being credited to either prompt.
+
+The prompt and tool-description rewrite is retained because it passes the deterministic safety and behavior tests, but the evaluation does not support a claim that it improved model behavior. Issue #19 is complete: its implementation, corrected fixed corpus, isolated live evaluation, and decision record are all present.
