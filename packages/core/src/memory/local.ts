@@ -6,6 +6,11 @@ import type { EmbeddingProvider } from '../providers/types.js'
 import { MAX_MEMORY_CHARS } from './gateway.js'
 import type { ContextGateway, MemoryEntry } from './gateway.js'
 
+export interface LocalMemory extends ContextGateway {
+  /** Release the SQLite handle before removing or replacing its state directory. Idempotent. */
+  close(): void
+}
+
 interface Row { id: string; text: string; kind: 'note' | 'summary'; source: string | null; created_at: string; status: 'active' | 'pending'; embedding: Uint8Array }
 
 const toEntry = (r: Row): MemoryEntry => ({ id: r.id, text: r.text, kind: r.kind, ...(r.source ? { source: r.source } : {}), status: r.status ?? 'active', createdAt: r.created_at })
@@ -29,11 +34,12 @@ export function memoryDir(cwd: string, stateRoot = path.join(os.homedir(), '.oqe
  * -journal/-wal/-shm sidecars as symlinks and redirect writes. node:sqlite is loaded lazily so hosts
  * without it (older Node) can still run, just without memory. `stateRoot` exists for tests only.
  */
-export async function openLocalMemory(cwd: string, embedder: EmbeddingProvider, stateRoot?: string): Promise<ContextGateway> {
+export async function openLocalMemory(cwd: string, embedder: EmbeddingProvider, stateRoot?: string): Promise<LocalMemory> {
   const { DatabaseSync } = await import('node:sqlite')
   const dir = memoryDir(cwd, stateRoot)
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
   const db = new DatabaseSync(path.join(dir, 'memory.sqlite'))
+  let closed = false
   fs.chmodSync(path.join(dir, 'memory.sqlite'), 0o600)
   db.exec(`CREATE TABLE IF NOT EXISTS memory (
     id TEXT PRIMARY KEY, text TEXT NOT NULL, kind TEXT NOT NULL, source TEXT,
@@ -51,6 +57,7 @@ export async function openLocalMemory(cwd: string, embedder: EmbeddingProvider, 
 
   return {
     version: 2,
+    close() { if (!closed) { db.close(); closed = true } },
     async remember(text, opts = {}) {
       const clean = text.trim()
       if (!clean || clean.length > MAX_MEMORY_CHARS) throw new Error(`memory text must be 1-${MAX_MEMORY_CHARS} characters`)

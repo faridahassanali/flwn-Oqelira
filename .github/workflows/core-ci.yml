@@ -1,0 +1,50 @@
+name: Core CI
+
+on:
+  push:
+    branches: [main, 'pr/**', 'codex/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Core / ${{ matrix.os }} / Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci --workspace=@oqelira/core --include-workspace-root=false --ignore-scripts
+      - run: npm run typecheck -w @oqelira/core
+      - run: npm run test -w @oqelira/core
+      - name: Test evaluation volume garbage collector
+        if: runner.os == 'Linux'
+        run: bash deploy/azure/test-cleanup-prompt-eval-volumes.sh
+
+  typecheck:
+    name: All workspace types / Node 24
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck

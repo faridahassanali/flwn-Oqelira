@@ -21,9 +21,25 @@ Date: 2026-11-12 (Africa/Cairo).
 | Prompt evaluation tests, including transport, reset, retries, concurrency and masked missing-file errors | 18/18 PASS |
 | VM garbage collector mock test, apply and dry-run | PASS |
 | Existing gVisor runner, `failing-test`, one configured model, baseline and current prompts | 2/2 PASS |
-| Windows core run | Six platform-specific failures in home-directory handling and SQLite file cleanup; Linux run above passes |
+| Core unit tests on Windows / Node 24 | 68/68 PASS after fixing home-directory isolation and SQLite handle cleanup |
 
-Live smoke results: [prompt-eval-gvisor-smoke.md](prompt-eval-gvisor-smoke.md).
+Live smoke after the core test fixes: [prompt-eval-gvisor-smoke-after-core-fixes.md](prompt-eval-gvisor-smoke-after-core-fixes.md).
+
+## Core failures and CI follow-up
+
+The earlier agent-loop and permission failures came from blocked loopback connections in the restricted test environment. Re-running with local test connections enabled confirmed those checks pass without changing the agent loop or the permission policy. The supported `afterTool` hook was retained unchanged.
+
+The six remaining Windows failures were fixed: environment fixtures now isolate both `HOME` and `USERPROFILE`, and local memory provides an idempotent `close()` so tests release every SQLite handle before removing their directories. The persistence test now closes and reopens the database; POSIX permission-bit assertions remain on Linux, while Windows continues testing path confinement and memory behavior.
+
+`.github/workflows/core-ci.yml` now runs core tests and types on Linux and Windows with Node 22 and 24, plus an all-workspace typecheck. Push triggers cover the PR branch so CI can run even while the PR has merge conflicts. Current results are available in [PR #34 checks](https://github.com/faridahassanali/flwn-Oqelira/pull/34/checks).
+
+## GC review on the existing VM
+
+- Installed script SHA256 matches this repository: `833f7966b82db7c2829e93f3656cdbdd5fa016b4776ad6e4627855ca57aa3601`.
+- Bash syntax and both systemd units passed verification. The timer is enabled and active.
+- Dry-run passed both directly and inside a transient unit with the production service's filesystem and privilege restrictions; exit status was 0.
+- The audit requested no volume deletion. The collector remains limited to expired, unattached evaluation volumes and keeps its 24-hour creation/activity safeguards.
+- No large A/B run was started during this follow-up.
 
 ## Remaining decision
 
