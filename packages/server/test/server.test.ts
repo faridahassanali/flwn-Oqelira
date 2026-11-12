@@ -13,7 +13,7 @@ import { Store, recoverHistory } from '../src/store.js'
 import { PostgresRunChannel } from '../src/channel.js'
 import { createCloudServer } from '../src/server.js'
 import { serverConfig } from '../src/config.js'
-import { dockerArgs } from '../src/sandbox.js'
+import { dockerArgs, runnerLimits } from '../src/sandbox.js'
 import path from 'node:path'
 import { createServer as createNetServer } from 'node:net'
 import fs from 'node:fs/promises'
@@ -30,6 +30,21 @@ test('configuration fails closed and sandbox arguments never mount the host or e
   assert.ok(args.includes('none')); assert.ok(args.includes('--read-only')); assert.ok(args.includes('1000:1000'))
   assert.ok(!args.some(a => a.includes('docker.sock') || a.includes('type=bind') || a === '--privileged'))
   assert.throws(() => dockerArgs('../../host', randomUUID(), 'image'), /identity/)
+})
+test('worker memory and job cap are runner-env only, validated and budgeted', () => {
+  const mem = (a: string[]) => a[a.indexOf('--memory') + 1]
+  assert.equal(mem(dockerArgs(randomUUID(), randomUUID(), 'img')), '1g')
+  assert.equal(mem(dockerArgs(randomUUID(), randomUUID(), 'img', 'runsc', '768m')), '768m')
+  assert.deepEqual(runnerLimits({}), { memory: '1g', maxJobs: 3 })
+  assert.deepEqual(runnerLimits({ OQELIRA_WORKER_MEMORY: '512m', OQELIRA_RUNNER_MAX_JOBS: '6' }), { memory: '512m', maxJobs: 6 })
+  assert.deepEqual(runnerLimits({ OQELIRA_WORKER_MEMORY: '2g', OQELIRA_RUNNER_MAX_JOBS: '2', OQELIRA_RUNNER_MEMORY_BUDGET: '4g' }), { memory: '2g', maxJobs: 2 })
+  for (const bad of [{ OQELIRA_WORKER_MEMORY: 'lots' }, { OQELIRA_WORKER_MEMORY: '0m' }, { OQELIRA_WORKER_MEMORY: '64m' }, { OQELIRA_WORKER_MEMORY: '-1g' }, { OQELIRA_RUNNER_MAX_JOBS: '0' }, { OQELIRA_RUNNER_MAX_JOBS: 'x' }, { OQELIRA_RUNNER_MAX_JOBS: '2.5' }, { OQELIRA_RUNNER_MEMORY_BUDGET: 'big' }]) assert.throws(() => runnerLimits(bad), /OQELIRA_/)
+  assert.throws(() => runnerLimits({ OQELIRA_RUNNER_MAX_JOBS: '4' }), /exceeds the runner memory budget/)
+  assert.throws(() => runnerLimits({ OQELIRA_WORKER_MEMORY: '2g' }), /budget/)
+  // A client cannot influence limits: request bodies never reach runnerLimits or dockerArgs' memory argument.
+  const client = { project: randomUUID(), name: 'run_command', input: {}, memory: '64g', OQELIRA_WORKER_MEMORY: '64g' }
+  assert.deepEqual(runnerLimits({}), { memory: '1g', maxJobs: 3 })
+  assert.equal(mem(dockerArgs(client.project, randomUUID(), 'img')), '1g')
 })
 test('recovery preserves known results and records missing outcomes instead of replaying commands', () => {
   const history: Message[] = [{ role: 'assistant', text: '', toolCalls: [{ id: 'a', name: 'run_command', input: { command: 'anything' } }, { id: 'b', name: 'write_file', input: {} }] }, { role: 'tool', results: [{ id: 'a', name: 'run_command', output: 'done' }] }]
@@ -108,11 +123,11 @@ test('real auth, durable PostgreSQL sessions, tenant isolation, memory and appro
     assert.equal((await new Store(pool).memory(a.data.user.id, project.id))[0]!.content, 'Use the pastel theme')
     const second = await store.createConversation(a.data.user.id, project.id, 'Second conversation', 'fixture')
     const firstRun = randomUUID(), otherRun = randomUUID()
-    assert.equal(await store.claim(a.data.user.id, conversation, firstRun), true)
+    assert.equal(await store.claim(a.data.user.id, conversation, firstRun, 'fixture-session-a'), true)
     assert.equal((await request('/api/file', a.cookie, { projectId:project.id,path:'a.txt',content:'race' })).status, 409)
-    assert.equal(await store.claim(a.data.user.id, second, otherRun), false)
+    assert.equal(await store.claim(a.data.user.id, second, otherRun, 'fixture-session-a'), false)
     await store.release(a.data.user.id, conversation, firstRun, 'ready')
-    assert.equal(await store.claim(a.data.user.id, second, otherRun), true)
+    assert.equal(await store.claim(a.data.user.id, second, otherRun, 'fixture-session-a'), true)
     await store.release(a.data.user.id, second, otherRun, 'ready')
     assert.equal(await store.takeQuota(a.data.user.id, 'fixture', 1, 3600), true)
     assert.equal(await store.takeQuota(a.data.user.id, 'fixture', 1, 3600), false)

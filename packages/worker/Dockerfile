@@ -4,6 +4,7 @@ RUN mkdir -p /workspace && chown node:node /workspace
 COPY packages/worker/runner.mjs /app/packages/worker/runner.mjs
 COPY packages/core/src/tools/search-engine.mjs /app/packages/core/src/tools/search-engine.mjs
 COPY packages/core/src/tools/changes.mjs /app/packages/core/src/tools/changes.mjs
+COPY packages/core/src/tools/contain.mjs /app/packages/core/src/tools/contain.mjs
 USER node
 WORKDIR /workspace
 ENTRYPOINT ["node", "/app/packages/worker/runner.mjs"]

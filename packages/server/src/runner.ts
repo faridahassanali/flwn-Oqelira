@@ -1,6 +1,6 @@
 import { createServer } from 'node:http'
 import { createHash, timingSafeEqual } from 'node:crypto'
-import { DockerSandbox, UUID } from './sandbox.js'
+import { DockerSandbox, UUID, runnerLimits } from './sandbox.js'
 
 const secret = process.env.OQELIRA_RUNNER_TOKEN ?? ''
 if (Buffer.byteLength(secret) < 32) throw new Error('Set a random OQELIRA_RUNNER_TOKEN of at least 32 bytes')
@@ -8,7 +8,8 @@ const expected = createHash('sha256').update(`Bearer ${secret}`).digest()
 const runtime = process.env.OQELIRA_CONTAINER_RUNTIME
 const image = process.env.OQELIRA_WORKER_IMAGE ?? 'oqelira-worker:local'
 if (process.env.NODE_ENV === 'production' && (runtime !== 'runsc' || !image.includes('@sha256:'))) throw new Error('Production runner requires gVisor runsc and a digest-pinned worker image')
-const sandbox = new DockerSandbox(image, runtime)
+const limits = runnerLimits()
+const sandbox = new DockerSandbox(image, runtime, limits.memory)
 let active = 0
 const server = createServer((req, res) => {
   const reply = (status: number, result: unknown) => { res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(result)) }
@@ -18,7 +19,7 @@ const server = createServer((req, res) => {
     const supplied = createHash('sha256').update(req.headers.authorization ?? '').digest()
     if (!timingSafeEqual(expected, supplied)) { reply(401, { error: 'Unauthorized' }); return }
     if (req.method !== 'POST' || req.url !== '/execute' || req.headers['content-type'] !== 'application/json') { reply(404, { error: 'Not found' }); return }
-    if (active >= 8) { reply(429, { error: 'Runner capacity reached' }); return }
+    if (active >= limits.maxJobs) { reply(429, { error: 'Runner capacity reached' }); return }
     active++
     try {
       let bytes = 0

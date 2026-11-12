@@ -28,7 +28,7 @@ async function freePort(){const reservation=createNetServer();await new Promise<
 
 test('replicas share one database and channel: approvals from any replica reach the run, and live events follow the run across replicas',{timeout:90000},async()=>{
  const portA=await freePort(),portB=await freePort()
- const db=url?undefined:new PGlite(),pool=db?pglitePool(db):new Pool({connectionString:url,max:10})
+ const db=url?undefined:new PGlite(),pool=db?pglitePool(db):new Pool({connectionString:url,max:10}),store=new Store(pool)
  const stops:(()=>Promise<void>)[]=[]
  const common={OQELIRA_AUTH_SECRET:'a52a03ac0f6e141d311d8ae6a7ad01c10d5770fcaeb9e31c',OQELIRA_DATABASE_URL:'postgres://fixture',OQELIRA_ALLOW_SIGNUP:'true'}
  const configA=serverConfig({...common,OQELIRA_SERVER_URL:`http://127.0.0.1:${portA}`}),configB=serverConfig({...common,OQELIRA_SERVER_URL:`http://127.0.0.1:${portB}`})
@@ -37,20 +37,24 @@ test('replicas share one database and channel: approvals from any replica reach 
  const provider=():ModelProvider=>({id:'fixture',async *stream(request){calls++;if(request.messages.at(-1)?.role==='user'){yield{type:'tool-call',call:{id:'memory',name:'remember_project',input:{content:'remembered once'}}};yield{type:'finish',reason:'tool-calls'}}else{yield{type:'text-delta',text:'Saved once'};yield{type:'finish',reason:'stop'}}}})
  const listen:Listen=db?(channel,callback)=>db.listen(channel,callback):async(channel,callback)=>{stops.push(await pgListen(url!)(channel,callback) as ()=>Promise<void>)}
  // Two replicas: separate run maps, separate origins and channel listeners, one database.
- const replica=async(config:typeof configA)=>createCloudServer({auth:createAuth(pool,config),store:new Store(pool),channel:await PostgresRunChannel.open(pool,listen),sandbox:{tools:()=>[]},origin:config.baseURL,dist:'.',models:[{id:'fixture',deployment:'fixture',api:'chat',speed:'fast'}],provider})
+ const replica=async(config:typeof configA)=>createCloudServer({auth:createAuth(pool,config),store,channel:await PostgresRunChannel.open(pool,listen),sandbox:{tools:()=>[]},origin:config.baseURL,dist:'.',models:[{id:'fixture',deployment:'fixture',api:'chat',speed:'fast'}],provider})
  const serverA=await replica(configA),serverB=await replica(configB)
  await serverA.listen(portA);await serverB.listen(portB)
  const send=(config:typeof configA,route:string,cookie='',data?:unknown)=>fetch(config.baseURL+route,{headers:{Origin:config.baseURL,Cookie:cookie,...(data===undefined?{}:{'Content-Type':'application/json'})},...(data===undefined?{}:{method:'POST',body:JSON.stringify(data)})})
  const onA=(route:string,cookie='',data?:unknown)=>send(configA,route,cookie,data),onB=(route:string,cookie='',data?:unknown)=>send(configB,route,cookie,data)
  try{
-  const signup=async(email:string)=>{const response=await onA('/api/auth/sign-up/email','',{name:'Fixture',email,password:'Temporary test password 2026!'});assert.equal(response.status,200);return response.headers.getSetCookie().map(value=>value.split(';')[0]).join('; ')}
-  const owner=await signup(`replica-owner-${randomUUID()}@example.test`)
+  const email=`replica-owner-${randomUUID()}@example.test`,password='Temporary test password 2026!'
+  const signup=async(email:string)=>{const response=await onA('/api/auth/sign-up/email','',{name:'Fixture',email,password});assert.equal(response.status,200);return response.headers.getSetCookie().map(value=>value.split(';')[0]).join('; ')}
+  const owner=await signup(email)
+  const secondSessionResponse=await onB('/api/auth/sign-in/email','',{email,password});assert.equal(secondSessionResponse.status,200)
+  const secondSession=secondSessionResponse.headers.getSetCookie().map(value=>value.split(';')[0]).join('; ')
   const project=await(await onA('/api/projects',owner,{name:'Replica test'})).json() as {id:string}
 
   // The run lives on replica A. A reconnecting client attaches to replica B and must see the approval live.
-  let run='',cursor=0
-  for await(const event of events(await onA('/api/run',owner,{projectId:project.id,model:'fixture',prompt:'remember',reconnectable:true}))){if(event.type==='started'){run=event.runId;cursor=event.sequence!;break}}
+  let run='',conversation='',cursor=0
+  for await(const event of events(await onA('/api/run',owner,{projectId:project.id,model:'fixture',prompt:'remember',reconnectable:true}))){if(event.type==='started'){run=event.runId;conversation=event.sessionId;cursor=event.sequence!;break}}
   assert.ok(run)
+  assert.equal((await onB(`/api/run/events?runId=${run}&after=${cursor}`,secondSession)).status,403)
   let approvals=0,done=false,stale:HostEvent|undefined
   for await(const event of events(await onB(`/api/run/events?runId=${run}&after=${cursor}`,owner))){
    if(event.type==='approval'){approvals++;stale=event;assert.equal((await onB('/api/approval',owner,{runId:run,approvalId:event.approval.id,allowed:true})).status,200)}
@@ -62,6 +66,9 @@ test('replicas share one database and channel: approvals from any replica reach 
   assert.equal((await onB('/api/approval',owner,{runId:run,approvalId:stale.approval.id,allowed:true})).status,409)
   assert.equal((await onA('/api/approval',owner,{runId:run,approvalId:stale.approval.id,allowed:true})).status,409)
   assert.equal((await onB('/api/approval',owner,{runId:'33333333-3333-4333-8333-333333333333',approvalId:stale.approval.id,allowed:true})).status,404)
+  const ownerId=(await pool.query<{id:string}>('SELECT id FROM "user" WHERE email=$1',[email])).rows[0]!.id,expiredApproval=randomUUID()
+  await store.createApproval(ownerId,'expired-session',conversation,run,expiredApproval,'fixture')
+  assert.equal(await store.decideApproval(ownerId,'expired-session',run,expiredApproval,ownerId,true),undefined)
 
   // A run without a reconnectable journal has its stream only on replica A; replica B still delivers its approval.
   let plainRun='',plainApprovals=0,plainDone=false
