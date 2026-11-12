@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { RunnerWorkspace } from '../eval/prompt/runner-workspace.js'
 import { localWorkspace } from './helpers/eval-workspace.js'
-import { BASELINE_SYSTEM, HARD_TASKS, TASKS, renderResults, runPromptEval } from '../eval/prompt/harness.js'
+import { BASELINE_SYSTEM, evalRunKey, HARD_TASKS, TASKS, renderResults, runPromptEval } from '../eval/prompt/harness.js'
 import type { EvalRun, RunRecord } from '../eval/prompt/harness.js'
 import type { ModelConfig } from '../src/providers/registry.js'
 import type { ModelEvent, ModelProvider, ModelRequest } from '../src/providers/types.js'
@@ -58,6 +58,19 @@ test('repeats multiply the runs, concurrency keeps a deterministic order, and th
   })
   assert.deepEqual(runs.map(r => `${r.prompt}#${r.rep}`), ['baseline#1', 'baseline#2', 'baseline#3', 'current#1', 'current#2', 'current#3'])
   assert.match(renderResults(runs, { date: 'd', mode: 'm' }), /\| create-file \| 0\/3 \| 0\/3 \|/)
+})
+
+test('a resumable caller can select stable, disjoint evaluation cells and await its journal writes', async () => {
+  const selected: string[] = []
+  const saved: string[] = []
+  const runs = await runPromptEval({
+    workspace: localWorkspace, models: models.slice(0, 1), prompts: { baseline: 'a', current: 'b' }, tasks: [task('create-file')], repeats: 2,
+    shouldRun: (job, index) => { if (index % 2 === 0) selected.push(evalRunKey(job)); return index % 2 === 0 },
+    provider: () => scripted(() => null),
+    onRun: async run => { await Promise.resolve(); saved.push(evalRunKey(run)) },
+  })
+  assert.deepEqual(runs.map(evalRunKey), selected)
+  assert.deepEqual(saved, selected)
 })
 
 /** Runs one hard task with a scripted sequence of tool calls (one step each) and returns the result. */
@@ -181,7 +194,7 @@ test('harness runs every model, prompt, and task, and reports per-run results', 
     prompts: { baseline: BASELINE_SYSTEM, current: 'system' },
     tasks: [task('create-file')],
     provider: () => scripted(() => null),
-    onRun: r => seen.push(r),
+    onRun: r => { seen.push(r) },
   })
   assert.equal(runs.length, models.length * 2)
   assert.equal(seen.length, runs.length)

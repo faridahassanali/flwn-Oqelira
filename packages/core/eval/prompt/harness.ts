@@ -336,6 +336,19 @@ export interface EvalRun {
   steps: number
 }
 
+export interface EvalJob {
+  model: string
+  prompt: string
+  task: string
+  /** 1-based repeat number. */
+  rep: number
+}
+
+/** Stable identity used by resumable live evaluation journals. */
+export function evalRunKey(run: EvalJob): string {
+  return `${run.model}\u0000${run.prompt}\u0000${run.task}\u0000${run.rep}`
+}
+
 export interface PromptEvalOptions {
   models: readonly ModelConfig[]
   prompts: Record<string, string>
@@ -349,18 +362,22 @@ export interface PromptEvalOptions {
   repeats?: number
   /** Parallel runs (default 1). Results keep a deterministic order regardless. */
   concurrency?: number
-  onRun?: (run: EvalRun) => void
+  /** Persist each completed cell before another cell starts. */
+  onRun?: (run: EvalRun) => void | Promise<void>
+  /** Excludes cells already present in a journal or assigned to another shard. */
+  shouldRun?: (job: EvalJob, index: number) => boolean
 }
 
 export async function runPromptEval(opts: PromptEvalOptions): Promise<EvalRun[]> {
-  const jobs: { model: ModelConfig; prompt: string; system: string; task: EvalTask; rep: number }[] = []
+  const allJobs: { model: ModelConfig; prompt: string; system: string; task: EvalTask; rep: number }[] = []
   for (const model of opts.models) {
     for (const [prompt, system] of Object.entries(opts.prompts)) {
       for (const task of opts.tasks ?? TASKS) {
-        for (let rep = 1; rep <= (opts.repeats ?? 1); rep++) jobs.push({ model, prompt, system, task, rep })
+        for (let rep = 1; rep <= (opts.repeats ?? 1); rep++) allJobs.push({ model, prompt, system, task, rep })
       }
     }
   }
+  const jobs = allJobs.filter((job, index) => opts.shouldRun?.({ model: job.model.id, prompt: job.prompt, task: job.task.id, rep: job.rep }, index) ?? true)
   const runs: EvalRun[] = new Array(jobs.length)
   let next = 0
   const worker = async () => {
@@ -368,7 +385,7 @@ export async function runPromptEval(opts: PromptEvalOptions): Promise<EvalRun[]>
       const { model, prompt, system, task, rep } = jobs[i]!
       const run = await runOne({ ...opts, model, system, task })
       runs[i] = { model: model.id, prompt, task: task.id, rep, ...run }
-      opts.onRun?.(runs[i]!)
+      await opts.onRun?.(runs[i]!)
     }
   }
   await Promise.all(Array.from({ length: Math.max(1, opts.concurrency ?? 1) }, worker))
