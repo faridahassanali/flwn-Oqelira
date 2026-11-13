@@ -1,4 +1,6 @@
 /** Browser-safe contracts. No Node, credentials or model SDK dependencies. */
+export type { SyncMessage, SyncProjectIdentity, SyncSnapshot } from './sync.js'
+
 export interface HostConfig {
   workspace: string
   models: { id: string; deployment: string }[]
